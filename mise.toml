@@ -1,0 +1,64 @@
+[tools]
+node = "26.7.0"
+
+[tasks.bootstrap]
+description = "Install dependencies and set up the development environment"
+depends = ["bootstrap:*"]
+
+[tasks."bootstrap:install"]
+description = "Install npm dependencies"
+run = "npm install"
+
+[tasks."bootstrap:pre-commit"]
+description = "Install the mise pre-commit hook"
+run = "mise generate git-pre-commit --write --task=check"
+
+[tasks."bootstrap:effect"]
+description = "Clone the Effect source at the package dependency version"
+run = '''
+effect_version="$(node -p "require('./package.json').dependencies.effect.replace(/^[~^]/, '')")"
+effect_tag="effect@$effect_version"
+
+if [ -d vendor/effect/.git ]; then
+	current_effect_tag="$(git -C vendor/effect describe --tags --exact-match 2>/dev/null || true)"
+	if [ "$current_effect_tag" != "$effect_tag" ]; then
+		if [ -n "$(git -C vendor/effect status --porcelain)" ]; then
+			echo "vendor/effect has local changes; cannot check out $effect_tag" >&2
+			exit 1
+		fi
+
+		git -C vendor/effect fetch --depth 1 origin "refs/tags/$effect_tag:refs/tags/$effect_tag"
+		git -C vendor/effect checkout --detach "$effect_tag"
+	fi
+elif [ -e vendor/effect ]; then
+	echo "vendor/effect exists but is not a Git checkout" >&2
+	exit 1
+else
+	mkdir -p vendor
+	git clone --branch "$effect_tag" --depth 1 https://github.com/Effect-TS/effect.git vendor/effect
+fi
+'''
+
+[tasks."fix:lint"]
+run = "./node_modules/.bin/oxlint --fix ."
+
+[tasks."fix:fmt"]
+run = "./node_modules/.bin/oxfmt --write ."
+
+[tasks.fix]
+depends = ["fix:*"]
+
+[tasks."check:lint"]
+run = "./node_modules/.bin/oxlint ."
+
+[tasks."check:types"]
+run = "npm run check"
+
+[tasks."check:fmt"]
+run = "./node_modules/.bin/oxfmt --check ."
+
+[tasks.check]
+depends = ["check:*"]
+
+[tasks.deploy]
+run = "ntn workers deploy"
