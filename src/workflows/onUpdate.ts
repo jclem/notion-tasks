@@ -27,10 +27,11 @@ export default createWorkflow({
 		Effect.runPromise(
 			program(event).pipe(
 				Effect.provide(
-					Layer.mergeAll(
+					Layer.merge(
 						NodeServices.layer,
-						effectStepLayer(context.step),
-						notionEffectLayer(context.notion),
+						notionEffectLayer(context.notion).pipe(
+							Layer.provideMerge(effectStepLayer(context.step)),
+						),
 					),
 				),
 			),
@@ -45,7 +46,7 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 
 	const step = yield* EffectStep;
 	const notion = yield* NotionEffect;
-	const source = yield* step("Get source task", notion.pages.retrieve({ page_id: pageId }));
+	const source = yield* notion.pages.retrieve({ page_id: pageId });
 
 	const repeatValue = source.properties["Repeat Regularly"];
 	const dueValue = source.properties.Due;
@@ -71,13 +72,10 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 	const { cutoff, dueDates } = schedule.value;
 
 	const sourceDataSourceId = yield* dataSourceId(source);
-	const occurrences = yield* step(
-		"Get repeating occurrences",
-		notion.dataSources.queryPages({
-			data_source_id: sourceDataSourceId,
-			filter: { property: "Repeat Of", relation: { contains: source.id } },
-		}),
-	);
+	const occurrences = yield* notion.dataSources.queryPages({
+		data_source_id: sourceDataSourceId,
+		filter: { property: "Repeat Of", relation: { contains: source.id } },
+	});
 
 	const futureOccurrences = occurrences
 		.filter((occurrence) => occurrenceDueDate(occurrence) > cutoff)
@@ -95,15 +93,11 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 
 		const occurrence = unmatchedOccurrences.splice(occurrenceIndex, 1)[0];
 		unmatchedDueDates.splice(unmatchedDueDates.indexOf(dueDate), 1);
-		yield* step(
-			"Sync occurrence",
-			{ key: ["sync-occurrence", occurrence.id] },
-			notion.pages.update({
-				page_id: occurrence.id,
-				properties: staticTaskProperties(source),
-				is_locked: true,
-			}),
-		);
+		yield* notion.pages.update({
+			page_id: occurrence.id,
+			properties: staticTaskProperties(source),
+			is_locked: true,
+		});
 	}
 
 	for (const [index, occurrence] of unmatchedOccurrences.entries()) {
@@ -112,44 +106,28 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 			break;
 		}
 
-		yield* step(
-			"Reschedule occurrence",
-			{ key: ["reschedule-occurrence", occurrence.id] },
-			notion.pages.update({
-				page_id: occurrence.id,
-				properties: {
-					...staticTaskProperties(source),
-					Due: { date: { start: dueDate } },
-				},
-				is_locked: true,
-			}),
-		);
+		yield* notion.pages.update({
+			page_id: occurrence.id,
+			properties: {
+				...staticTaskProperties(source),
+				Due: { date: { start: dueDate } },
+			},
+			is_locked: true,
+		});
 	}
 
 	const rescheduledCount = Math.min(unmatchedOccurrences.length, unmatchedDueDates.length);
 	for (const occurrence of unmatchedOccurrences.slice(rescheduledCount)) {
-		yield* step(
-			"Archive occurrence",
-			{ key: ["archive-occurrence", occurrence.id] },
-			notion.pages.update({ page_id: occurrence.id, in_trash: true }),
-		);
+		yield* notion.pages.update({ page_id: occurrence.id, in_trash: true });
 	}
 
 	for (const dueDate of unmatchedDueDates.slice(rescheduledCount)) {
-		const occurrence = yield* step(
-			"Create occurrence",
-			{ key: ["create-occurrence", dueDate] },
-			notion.pages.create({
-				parent: { data_source_id: sourceDataSourceId },
-				properties: occurrenceProperties(source, dueDate),
-				children: [],
-			}),
-		);
-		yield* step(
-			"Lock occurrence",
-			{ key: ["lock-occurrence", occurrence.id] },
-			notion.pages.update({ page_id: occurrence.id, is_locked: true }),
-		);
+		const occurrence = yield* notion.pages.create({
+			parent: { data_source_id: sourceDataSourceId },
+			properties: occurrenceProperties(source, dueDate),
+			children: [],
+		});
+		yield* notion.pages.update({ page_id: occurrence.id, is_locked: true });
 	}
 });
 

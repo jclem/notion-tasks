@@ -4,7 +4,7 @@ import { createWorkflow } from "@notionhq/workers/alpha/workflow";
 import { NodeServices } from "@effect/platform-node";
 import { Data, Effect, Layer, Option } from "effect";
 import { dueDateFromCompletion } from "../lib/dateUtils.js";
-import { EffectStep, effectStepLayer } from "../lib/effectStep.js";
+import { effectStepLayer } from "../lib/effectStep.js";
 import { NotionEffect, notionEffectLayer } from "../lib/notionEffect.js";
 
 /**
@@ -19,10 +19,11 @@ export default createWorkflow({
 		Effect.runPromise(
 			program(event).pipe(
 				Effect.provide(
-					Layer.mergeAll(
+					Layer.merge(
 						NodeServices.layer,
-						effectStepLayer(context.step),
-						notionEffectLayer(context.notion),
+						notionEffectLayer(context.notion).pipe(
+							Layer.provideMerge(effectStepLayer(context.step)),
+						),
 					),
 				),
 			),
@@ -36,21 +37,17 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 		return;
 	}
 
-	const step = yield* EffectStep;
 	const notion = yield* NotionEffect;
-	const page = yield* step("Get page", notion.pages.retrieve({ page_id: pageId }));
+	const page = yield* notion.pages.retrieve({ page_id: pageId });
 
-	yield* step(
-		"Set completed-at",
-		notion.pages.update({
-			page_id: page.id,
-			properties: {
-				"Completed At": {
-					date: { start: completedAt },
-				},
+	yield* notion.pages.update({
+		page_id: page.id,
+		properties: {
+			"Completed At": {
+				date: { start: completedAt },
 			},
-		}),
-	);
+		},
+	});
 
 	const repeatValue = page.properties["Repeat on Completion"];
 	if (repeatValue?.type !== "rich_text") {
@@ -66,14 +63,11 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 	}
 
 	const parent = yield* pageParent(page);
-	yield* step(
-		"Create repeated task",
-		notion.pages.create({
-			parent,
-			properties: repeatedTaskProperties(page, due.value),
-			children: [],
-		}),
-	);
+	yield* notion.pages.create({
+		parent,
+		properties: repeatedTaskProperties(page, due.value),
+		children: [],
+	});
 });
 
 function pageParent(
