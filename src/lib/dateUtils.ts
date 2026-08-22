@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Options } from "rrule";
-import { DateTime, Option } from "effect";
+import { Array, DateTime, HashSet, Option, pipe } from "effect";
 
 const require = createRequire(import.meta.url);
 const { RRule } = require("rrule") as typeof import("rrule");
@@ -44,7 +44,7 @@ export function futureDueDates(
 		const start = yield* calendarMidnightUtc(dueDate);
 		const cutoff = yield* easternMidnightUtc(now);
 		const rule = yield* parseRecurrenceRule(recurrenceRule, start).pipe(
-			Option.filter((rule) => calendarFrequencies.has(rule.options.freq)),
+			Option.filter((rule) => HashSet.has(calendarFrequencies, rule.options.freq)),
 		);
 
 		const windowEnd = DateTime.add(cutoff, { months: 6 });
@@ -53,12 +53,12 @@ export function futureDueDates(
 			DateTime.toDateUtc(cutoff),
 			DateTime.toDateUtc(windowEnd),
 		);
-		return yield* Option.all(
-			occurrences
-				.filter((occurrence) => occurrence.getTime() > DateTime.toEpochMillis(cutoff))
-				.map((occurrence) =>
-					DateTime.make(occurrence).pipe(Option.map(DateTime.formatIsoDateUtc)),
-				),
+		return yield* pipe(
+			occurrences,
+			Array.filter((occurrence) => occurrence.getTime() > DateTime.toEpochMillis(cutoff)),
+			Array.map(DateTime.make),
+			Option.all,
+			Option.map(Array.map(DateTime.formatIsoDateUtc)),
 		);
 	});
 }
@@ -114,7 +114,12 @@ function recurrencesBetween(
 
 const easternTimeZone = "America/New_York";
 const calendarDatePattern = /^\d{4}-\d{2}-\d{2}$/;
-const calendarFrequencies = new Set([RRule.DAILY, RRule.WEEKLY, RRule.MONTHLY, RRule.YEARLY]);
+const calendarFrequencies: HashSet.HashSet<number> = HashSet.make(
+	RRule.DAILY,
+	RRule.WEEKLY,
+	RRule.MONTHLY,
+	RRule.YEARLY,
+);
 const parseRecurrenceOptions = Option.liftThrowable((value: string) => RRule.parseString(value));
 const makeRecurrenceRule = Option.liftThrowable(
 	(options: Partial<Options>, dtstart: Date) => new RRule({ ...options, dtstart }),

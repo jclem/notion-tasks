@@ -1,11 +1,11 @@
 import { type CreatePageParameters, type PageObjectResponse } from "@notionhq/client";
 import { NotionPageUpdatedEvent, triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
-import { NodeServices } from "@effect/platform-node";
-import { Data, Effect, Layer, Option } from "effect";
+import { Data, Effect, HashSet, Match, Option, pipe, Record, Result } from "effect";
 import { dueDateFromCompletion } from "../lib/dateUtils.js";
-import { effectStepLayer } from "../lib/effectStep.js";
-import { NotionEffect, notionEffectLayer } from "../lib/notionEffect.js";
+import { NotionEffect } from "../lib/notionEffect.js";
+import { richTextProperty } from "../lib/notionProperties.js";
+import { workflowLayer } from "../lib/workflowLayer.js";
 
 /**
  * Records a task's completion time and creates its next occurrence when it has
@@ -16,18 +16,7 @@ export default createWorkflow({
 	description: "Processes tasks upon completion",
 	triggers: [triggers.notionPageUpdated()],
 	handler: (event, context) =>
-		Effect.runPromise(
-			program(event).pipe(
-				Effect.provide(
-					Layer.merge(
-						NodeServices.layer,
-						notionEffectLayer(context.notion).pipe(
-							Layer.provideMerge(effectStepLayer(context.step)),
-						),
-					),
-				),
-			),
-		),
+		Effect.runPromise(program(event).pipe(Effect.provide(workflowLayer(context)))),
 });
 
 const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
@@ -49,14 +38,8 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 		},
 	});
 
-	const repeatValue = page.properties["Repeat on Completion"];
-	if (repeatValue?.type !== "rich_text") {
-		return;
-	}
-
-	const due = dueDateFromCompletion(
-		completedAt,
-		repeatValue.rich_text.map((text) => text.plain_text).join(""),
+	const due = richTextProperty(page, "Repeat on Completion").pipe(
+		Option.flatMap((rule) => dueDateFromCompletion(completedAt, rule)),
 	);
 	if (Option.isNone(due)) {
 		return;
@@ -73,45 +56,29 @@ const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
 function pageParent(
 	page: PageObjectResponse,
 ): Effect.Effect<NonNullable<CreatePageParameters["parent"]>, InvalidPageParentError> {
-	if (page.parent.type === "data_source_id") {
-		return Effect.succeed({ data_source_id: page.parent.data_source_id });
-	}
-	if (page.parent.type === "database_id") {
-		return Effect.succeed({ database_id: page.parent.database_id });
-	}
-
-	return Effect.fail(new InvalidPageParentError({ pageId: page.id }));
+	return Match.value(page.parent).pipe(
+		Match.when({ type: "data_source_id" }, ({ data_source_id }) =>
+			Effect.succeed({ data_source_id }),
+		),
+		Match.when({ type: "database_id" }, ({ database_id }) => Effect.succeed({ database_id })),
+		Match.orElse(() => Effect.fail(new InvalidPageParentError({ pageId: page.id }))),
+	);
 }
 
 function repeatedTaskProperties(
 	page: PageObjectResponse,
 	due: string,
 ): NonNullable<CreatePageParameters["properties"]> {
-	const writableTypes = new Set([
-		"title",
-		"rich_text",
-		"number",
-		"url",
-		"select",
-		"multi_select",
-		"people",
-		"email",
-		"phone_number",
-		"date",
-		"checkbox",
-		"relation",
-		"files",
-		"status",
-		"place",
-		"verification",
-	]);
-	const properties = Object.fromEntries(
-		Object.entries(page.properties)
-			.filter(([, property]) => writableTypes.has(property.type))
-			.map(([name, property]) => {
-				const { id: _id, ...value } = property;
-				return [name, value];
-			}),
+	const properties = pipe(
+		page.properties,
+		Record.filterMap((property) => {
+			if (!HashSet.has(writablePropertyTypes, property.type)) {
+				return Result.failVoid;
+			}
+
+			const { id: _id, ...value } = property;
+			return Result.succeed(value);
+		}),
 	);
 
 	return {
@@ -125,3 +92,22 @@ function repeatedTaskProperties(
 class InvalidPageParentError extends Data.TaggedError("InvalidPageParentError")<{
 	readonly pageId: string;
 }> {}
+
+const writablePropertyTypes: HashSet.HashSet<string> = HashSet.make(
+	"title",
+	"rich_text",
+	"number",
+	"url",
+	"select",
+	"multi_select",
+	"people",
+	"email",
+	"phone_number",
+	"date",
+	"checkbox",
+	"relation",
+	"files",
+	"status",
+	"place",
+	"verification",
+);

@@ -7,11 +7,14 @@ import type {
 	QueryDataSourceParameters,
 	UpdatePageParameters,
 } from "@notionhq/client";
-import { Context, Data, Effect, Layer } from "effect";
+import { Context, Data, Effect, Layer, Option, Stream } from "effect";
 import { RateLimiter } from "effect/unstable/persistence";
 import { EffectStep } from "./effectStep.js";
 
 const rateLimiterLayer = RateLimiter.layer.pipe(Layer.provide(RateLimiter.layerStoreMemory));
+
+/** The maximum number of Notion API requests started per second. */
+export const notionRequestsPerSecond = 3;
 
 /** Durable, rate-limited Effect service for complete-page Notion API operations. */
 export class NotionEffect extends Context.Service<
@@ -58,7 +61,7 @@ const makeNotionEffect = Effect.fn(function* (client: Client) {
 		}).pipe(
 			withRateLimiter({
 				key: "notion-api",
-				limit: 3,
+				limit: notionRequestsPerSecond,
 				window: "1 second",
 				onExceeded: "delay",
 				algorithm: "token-bucket",
@@ -66,11 +69,9 @@ const makeNotionEffect = Effect.fn(function* (client: Client) {
 		);
 
 	const fullPage = (operation: string, page: unknown) => {
-		if (isFullPage(page)) {
-			return Effect.succeed(page);
-		}
-
-		return Effect.fail(new FullPageExpectedError({ operation }));
+		return Effect.succeed(page).pipe(
+			Effect.filterOrFail(isFullPage, () => new FullPageExpectedError({ operation })),
+		);
 	};
 
 	return {
@@ -105,26 +106,32 @@ const makeNotionEffect = Effect.fn(function* (client: Client) {
 				operation(
 					"dataSources.queryPages",
 					parameters,
-					Effect.gen(function* () {
-						const pages: PageObjectResponse[] = [];
-						let cursor = parameters.start_cursor;
-						do {
-							const response = yield* request("dataSources.query", () =>
-								client.dataSources.query({
-									...parameters,
-									result_type: "page",
-									page_size: parameters.page_size ?? 100,
-									start_cursor: cursor,
-								}),
-							);
-							for (const result of response.results) {
-								pages.push(yield* fullPage("dataSources.query", result));
-							}
-							cursor = response.has_more ? response.next_cursor : null;
-						} while (cursor);
-
-						return pages;
-					}),
+					Stream.paginate(parameters.start_cursor, (cursor) =>
+						request("dataSources.query", () =>
+							client.dataSources.query({
+								...parameters,
+								result_type: "page",
+								page_size: parameters.page_size ?? 100,
+								start_cursor: cursor,
+							}),
+						).pipe(
+							Effect.flatMap((response) =>
+								Effect.forEach(response.results, (result) =>
+									fullPage("dataSources.query", result),
+								).pipe(
+									Effect.map(
+										(pages) =>
+											[
+												pages,
+												Option.fromNullishOr(
+													response.has_more ? response.next_cursor : null,
+												),
+											] as const,
+									),
+								),
+							),
+						),
+					).pipe(Stream.runCollect),
 				),
 		},
 	};
