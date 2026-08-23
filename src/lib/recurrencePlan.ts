@@ -2,71 +2,84 @@ import type { PageObjectResponse } from "@notionhq/client";
 import { Array, Option, Order, pipe } from "effect";
 import { datePropertyStart } from "./notionProperties.js";
 
-/** A due-date update for an existing regularly repeating occurrence. */
-export type RescheduledOccurrence = {
+/** A scheduled-date update for an existing regularly repeating occurrence. */
+export type PlannedOccurrence = {
 	readonly occurrence: PageObjectResponse;
-	readonly dueDate: string;
+	readonly occurrenceDate: string;
 };
 
 /** The deterministic actions needed to reconcile regularly repeating occurrences. */
 export type RecurrencePlan = {
-	readonly synchronize: ReadonlyArray<PageObjectResponse>;
-	readonly reschedule: ReadonlyArray<RescheduledOccurrence>;
+	readonly synchronize: ReadonlyArray<PlannedOccurrence>;
+	readonly reschedule: ReadonlyArray<PlannedOccurrence>;
 	readonly archive: ReadonlyArray<PageObjectResponse>;
 	readonly create: ReadonlyArray<string>;
 };
 
 /**
- * Plans how existing future occurrences should match a desired set of due dates.
+ * Plans how existing future occurrences should match a desired set of scheduled dates.
  *
- * Exact due-date matches are synchronized in place. Remaining occurrences are
- * paired with remaining due dates in order, after which excess occurrences are
- * archived and excess due dates are created.
+ * Exact scheduled-date matches are synchronized in place. Remaining occurrences are
+ * paired with remaining dates in order, after which excess occurrences are
+ * archived and excess scheduled dates are created.
  *
  * @param occurrences - Existing occurrences related to the source task.
- * @param dueDates - Desired future due dates in recurrence order.
+ * @param occurrenceDates - Desired future dates in recurrence order.
  * @param cutoff - The current Eastern calendar date, which existing occurrences must follow.
+ * @param primaryDateProperty - Task property that normally stores the scheduled date.
+ * @param fallbackDateProperty - Previous date property used while migrating a template.
  * @returns An immutable reconciliation plan.
  */
 export function recurrencePlan(
 	occurrences: ReadonlyArray<PageObjectResponse>,
-	dueDates: ReadonlyArray<string>,
+	occurrenceDates: ReadonlyArray<string>,
 	cutoff: string,
+	primaryDateProperty = "Due",
+	fallbackDateProperty?: string,
 ): RecurrencePlan {
 	const futureOccurrences = pipe(
 		occurrences,
 		Array.flatMap((occurrence) =>
-			occurrenceDueDate(occurrence).pipe(
-				Option.filter((dueDate) => dueDate > cutoff),
-				Option.map((dueDate) => ({ occurrence, dueDate })),
+			occurrenceScheduleDate(
+				occurrence,
+				primaryDateProperty,
+				fallbackDateProperty,
+				cutoff,
+			).pipe(
+				Option.map((occurrenceDate) => ({ occurrence, occurrenceDate })),
 				Array.fromOption,
 			),
 		),
-		Array.sortWith(({ dueDate }) => dueDate, Order.String),
+		Array.sortWith(({ occurrenceDate }) => occurrenceDate, Order.String),
 	);
 	const matches = pipe(
-		dueDates,
+		occurrenceDates,
 		Array.reduce(
 			{
-				synchronize: [] as PageObjectResponse[],
+				synchronize: [] as PlannedOccurrence[],
 				unmatchedOccurrences: futureOccurrences,
-				unmatchedDueDates: [] as string[],
+				unmatchedOccurrenceDates: [] as string[],
 			},
-			(state, dueDate) =>
+			(state, occurrenceDate) =>
 				pipe(
 					state.unmatchedOccurrences,
-					Array.findFirstIndex((occurrence) => occurrence.dueDate === dueDate),
+					Array.findFirstIndex(
+						(occurrence) => occurrence.occurrenceDate === occurrenceDate,
+					),
 					Option.match({
 						onNone: () => ({
 							...state,
-							unmatchedDueDates: Array.append(state.unmatchedDueDates, dueDate),
+							unmatchedOccurrenceDates: Array.append(
+								state.unmatchedOccurrenceDates,
+								occurrenceDate,
+							),
 						}),
 						onSome: (index) => ({
 							...state,
-							synchronize: Array.append(
-								state.synchronize,
-								state.unmatchedOccurrences[index].occurrence,
-							),
+							synchronize: Array.append(state.synchronize, {
+								occurrence: state.unmatchedOccurrences[index].occurrence,
+								occurrenceDate,
+							}),
 							unmatchedOccurrences: Array.remove(state.unmatchedOccurrences, index),
 						}),
 					}),
@@ -77,18 +90,36 @@ export function recurrencePlan(
 	return {
 		synchronize: matches.synchronize,
 		reschedule: pipe(
-			Array.zip(matches.unmatchedOccurrences, matches.unmatchedDueDates),
-			Array.map(([{ occurrence }, dueDate]) => ({ occurrence, dueDate })),
+			Array.zip(matches.unmatchedOccurrences, matches.unmatchedOccurrenceDates),
+			Array.map(([{ occurrence }, occurrenceDate]) => ({ occurrence, occurrenceDate })),
 		),
 		archive: pipe(
 			matches.unmatchedOccurrences,
-			Array.drop(matches.unmatchedDueDates.length),
+			Array.drop(matches.unmatchedOccurrenceDates.length),
 			Array.map(({ occurrence }) => occurrence),
 		),
-		create: pipe(matches.unmatchedDueDates, Array.drop(matches.unmatchedOccurrences.length)),
+		create: pipe(
+			matches.unmatchedOccurrenceDates,
+			Array.drop(matches.unmatchedOccurrences.length),
+		),
 	};
 }
 
-function occurrenceDueDate(page: PageObjectResponse): Option.Option<string> {
-	return datePropertyStart(page, "Due").pipe(Option.map((start) => start.slice(0, 10)));
+function occurrenceScheduleDate(
+	page: PageObjectResponse,
+	primaryProperty: string,
+	fallbackProperty: string | undefined,
+	cutoff: string,
+): Option.Option<string> {
+	return pipe(
+		[primaryProperty, fallbackProperty].filter((name): name is string => name !== undefined),
+		Array.findFirst((name) =>
+			datePropertyStart(page, name).pipe(
+				Option.map((start) => start.slice(0, 10)),
+				Option.exists((date) => date > cutoff),
+			),
+		),
+		Option.flatMap((name) => datePropertyStart(page, name)),
+		Option.map((start) => start.slice(0, 10)),
+	);
 }

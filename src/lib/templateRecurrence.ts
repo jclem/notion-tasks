@@ -1,6 +1,6 @@
 import type { CreatePageParameters, PageObjectResponse } from "@notionhq/client";
 import { Data, Effect, Option, pipe } from "effect";
-import { easternDate, futureDueDates } from "./dateUtils.js";
+import { easternDate, futureOccurrenceDates } from "./dateUtils.js";
 import { NotionEffect } from "./notionEffect.js";
 import {
 	datePropertyStart,
@@ -14,6 +14,9 @@ import {
 	relationValue,
 	repeatMode,
 	richTextValue,
+	scheduleOn,
+	scheduledTaskDateProperties,
+	scheduledTaskDates,
 	synchronizedTaskProperties,
 	taskProperty,
 	templateProperty,
@@ -95,7 +98,7 @@ export const reconcileTemplate = Effect.fn(function* (
 
 	const schedule = Option.all({
 		cutoff: easternDate(now),
-		dueDates: futureDueDates(template.compiled.rrule, template.starts, now),
+		occurrenceDates: futureOccurrenceDates(template.compiled.rrule, template.starts, now),
 	});
 	if (Option.isNone(schedule)) {
 		return yield* Effect.fail(
@@ -103,11 +106,24 @@ export const reconcileTemplate = Effect.fn(function* (
 		);
 	}
 
-	const plan = recurrencePlan(instances, schedule.value.dueDates, schedule.value.cutoff);
-	for (const occurrence of plan.synchronize) {
-		const dueDate = Option.getOrElse(datePropertyStart(occurrence, taskProperty.due), () => "");
-		const properties = regularOccurrenceUpdateProperties(template, root.page.id, dueDate);
-		if (taskNeedsUpdate(occurrence, template, root.page.id, dueDate)) {
+	const primaryDateProperty =
+		template.scheduleOn === scheduleOn.start ? taskProperty.start : taskProperty.due;
+	const fallbackDateProperty =
+		template.scheduleOn === scheduleOn.start ? taskProperty.due : taskProperty.start;
+	const plan = recurrencePlan(
+		instances,
+		schedule.value.occurrenceDates,
+		schedule.value.cutoff,
+		primaryDateProperty,
+		fallbackDateProperty,
+	);
+	for (const { occurrence, occurrenceDate } of plan.synchronize) {
+		const properties = regularOccurrenceUpdateProperties(
+			template,
+			root.page.id,
+			occurrenceDate,
+		);
+		if (taskNeedsUpdate(occurrence, template, root.page.id, occurrenceDate)) {
 			yield* notion.pages.update({
 				page_id: occurrence.id,
 				properties,
@@ -116,10 +132,10 @@ export const reconcileTemplate = Effect.fn(function* (
 		}
 	}
 
-	for (const { occurrence, dueDate } of plan.reschedule) {
+	for (const { occurrence, occurrenceDate } of plan.reschedule) {
 		yield* notion.pages.update({
 			page_id: occurrence.id,
-			properties: regularOccurrenceUpdateProperties(template, root.page.id, dueDate),
+			properties: regularOccurrenceUpdateProperties(template, root.page.id, occurrenceDate),
 			is_locked: true,
 		});
 	}
@@ -128,10 +144,10 @@ export const reconcileTemplate = Effect.fn(function* (
 		yield* notion.pages.update({ page_id: occurrence.id, in_trash: true });
 	}
 
-	for (const dueDate of plan.create) {
+	for (const occurrenceDate of plan.create) {
 		const occurrence = yield* notion.pages.create({
 			parent: { data_source_id: tasksDataSourceId },
-			properties: regularOccurrenceCreateProperties(template, root.page.id, dueDate),
+			properties: regularOccurrenceCreateProperties(template, root.page.id, occurrenceDate),
 			markdown: templateMarkdown,
 		});
 		yield* notion.pages.update({ page_id: occurrence.id, is_locked: true });
@@ -247,26 +263,28 @@ function synchronizeInstances(
 function regularOccurrenceCreateProperties(
 	template: TaskTemplate,
 	rootTaskId: string,
-	dueDate: string,
+	occurrenceDate: string,
 ): NonNullable<CreatePageParameters["properties"]> {
 	return newTaskProperties(
 		template,
 		rootTaskId,
-		dueDate,
-		`regular:${template.page.id}:${dueDate}`,
+		occurrenceDate,
+		`regular:${template.page.id}:${occurrenceDate}`,
 	);
 }
 
 function regularOccurrenceUpdateProperties(
 	template: TaskTemplate,
 	rootTaskId: string,
-	dueDate: string,
+	occurrenceDate: string,
 ): NonNullable<CreatePageParameters["properties"]> {
 	return {
 		...synchronizedTaskProperties(template),
-		[taskProperty.due]: { date: { start: dueDate } },
+		...scheduledTaskDateProperties(template, occurrenceDate),
 		[taskProperty.repeatOf]: relationValue([rootTaskId]),
-		[taskProperty.occurrenceKey]: richTextValue(`regular:${template.page.id}:${dueDate}`),
+		[taskProperty.occurrenceKey]: richTextValue(
+			`regular:${template.page.id}:${occurrenceDate}`,
+		),
 	};
 }
 
@@ -283,17 +301,22 @@ function taskNeedsUpdate(
 	page: PageObjectResponse,
 	template: TaskTemplate,
 	rootTaskId: string,
-	dueDate: string,
+	occurrenceDate: string,
 ): boolean {
+	const expectedDates = scheduledTaskDates(template, occurrenceDate);
 	return (
 		taskNeedsTemplateSync(page, template) ||
-		Option.getOrElse(datePropertyStart(page, taskProperty.due), () => "").slice(0, 10) !==
-			dueDate ||
+		dateValue(page, taskProperty.start) !== (expectedDates.start ?? "") ||
+		dateValue(page, taskProperty.due) !== (expectedDates.due ?? "") ||
 		Option.getOrElse(richTextProperty(page, taskProperty.occurrenceKey), () => "") !==
-			`regular:${template.page.id}:${dueDate}` ||
+			`regular:${template.page.id}:${occurrenceDate}` ||
 		!sameIds(relationPropertyIds(page, taskProperty.repeatOf), [rootTaskId]) ||
 		!page.is_locked
 	);
+}
+
+function dateValue(page: PageObjectResponse, property: string): string {
+	return Option.getOrElse(datePropertyStart(page, property), () => "").slice(0, 10);
 }
 
 function sameIds(actual: Option.Option<ReadonlyArray<string>>, expected: ReadonlyArray<string>) {

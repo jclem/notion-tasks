@@ -1,7 +1,7 @@
 import { triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
 import { DateTime, Effect, Option } from "effect";
-import { dueDateFromCompletion } from "../lib/dateUtils.js";
+import { occurrenceDateFromCompletion } from "../lib/dateUtils.js";
 import { EffectStep } from "../lib/effectStep.js";
 import { NotionEffect } from "../lib/notionEffect.js";
 import { pageIdFromUrl } from "../lib/notionIds.js";
@@ -95,8 +95,11 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 		});
 	}
 
-	const dueDate = dueDateFromCompletion(completedAt, parsed.template.compiled.rrule);
-	if (Option.isNone(dueDate)) {
+	const occurrenceDate = occurrenceDateFromCompletion(
+		completedAt,
+		parsed.template.compiled.rrule,
+	);
+	if (Option.isNone(occurrenceDate)) {
 		return;
 	}
 
@@ -118,7 +121,12 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 	const templateMarkdown = yield* notion.pages.retrieveMarkdown({ page_id: templatePage.id });
 	yield* notion.pages.create({
 		parent: { data_source_id: config.tasksDataSourceId },
-		properties: newTaskProperties(parsed.template, rootTaskId, dueDate.value, occurrenceKey),
+		properties: newTaskProperties(
+			parsed.template,
+			rootTaskId,
+			occurrenceDate.value,
+			occurrenceKey,
+		),
 		markdown: templateMarkdown,
 	});
 });

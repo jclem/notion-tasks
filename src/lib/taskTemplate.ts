@@ -4,10 +4,12 @@ import type {
 	UpdatePageParameters,
 } from "@notionhq/client";
 import { Option } from "effect";
+import { calendarDateAfterDays } from "./dateUtils.js";
 import { compileFriendlySchedule, type CompiledSchedule } from "./friendlySchedule.js";
 import {
 	checkboxProperty,
 	datePropertyStart,
+	numberProperty,
 	relationPropertyIds,
 	richTextProperty,
 	selectPropertyName,
@@ -25,12 +27,15 @@ export const templateProperty = {
 	rrule: "RRULE",
 	scheduleDescription: "Schedule Description",
 	scheduleError: "Schedule Error",
+	scheduleOn: "Schedule On",
+	dueOffsetDays: "Due Offset Days",
 } as const;
 
 export const taskProperty = {
 	title: "Title",
 	status: "Status",
 	due: "Due",
+	start: "Start",
 	completedAt: "Completed At",
 	notes: "Notes",
 	template: "Template",
@@ -44,7 +49,13 @@ export const repeatMode = {
 	afterCompletion: "After completion",
 } as const;
 
+export const scheduleOn = {
+	due: "Due",
+	start: "Start",
+} as const;
+
 export type RepeatMode = (typeof repeatMode)[keyof typeof repeatMode];
+export type ScheduleOn = (typeof scheduleOn)[keyof typeof scheduleOn];
 
 export type TaskTemplate = {
 	readonly page: PageObjectResponse;
@@ -52,6 +63,8 @@ export type TaskTemplate = {
 	readonly enabled: boolean;
 	readonly mode: RepeatMode;
 	readonly starts: string;
+	readonly scheduleOn: ScheduleOn;
+	readonly dueOffsetDays: number | null;
 	readonly schedule: string;
 	readonly notes: string;
 	readonly compiled: CompiledSchedule;
@@ -89,6 +102,9 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 	if (Option.isNone(starts)) {
 		return invalid(`${templateProperty.starts} is required.`);
 	}
+	if (Option.isNone(calendarDateAfterDays(starts.value, 0))) {
+		return invalid(`${templateProperty.starts} must be a date without a time.`);
+	}
 
 	const schedule = richTextProperty(page, templateProperty.schedule);
 	if (Option.isNone(schedule) || schedule.value.trim().length === 0) {
@@ -100,6 +116,25 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 		return invalid(`Could not understand schedule: ${schedule.value}`);
 	}
 
+	const selectedScheduleOn = selectPropertyName(page, templateProperty.scheduleOn);
+	const scheduleOnValue = Option.getOrElse(selectedScheduleOn, () => scheduleOn.due);
+	if (scheduleOnValue !== scheduleOn.due && scheduleOnValue !== scheduleOn.start) {
+		return invalid(
+			`${templateProperty.scheduleOn} must be ${scheduleOn.due} or ${scheduleOn.start}.`,
+		);
+	}
+
+	const dueOffsetDays = numberProperty(page, templateProperty.dueOffsetDays);
+	if (
+		Option.isSome(dueOffsetDays) &&
+		(!Number.isInteger(dueOffsetDays.value) || dueOffsetDays.value < 0)
+	) {
+		return invalid(`${templateProperty.dueOffsetDays} must be a non-negative whole number.`);
+	}
+	if (scheduleOnValue === scheduleOn.due && Option.isSome(dueOffsetDays)) {
+		return invalid(`${templateProperty.dueOffsetDays} must be empty when scheduling on Due.`);
+	}
+
 	return {
 		ok: true,
 		template: {
@@ -108,6 +143,8 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 			enabled: enabled.value,
 			mode: mode.value,
 			starts: starts.value,
+			scheduleOn: scheduleOnValue,
+			dueOffsetDays: Option.getOrNull(dueOffsetDays),
 			schedule: schedule.value,
 			notes: Option.getOrElse(richTextProperty(page, templateProperty.notes), () => ""),
 			compiled: compiled.value,
@@ -138,16 +175,45 @@ export function synchronizedTaskProperties(
 export function newTaskProperties(
 	template: TaskTemplate,
 	rootTaskId: string,
-	dueDate: string,
+	occurrenceDate: string,
 	occurrenceKey: string,
 ): NonNullable<CreatePageParameters["properties"]> {
 	return {
 		...synchronizedTaskProperties(template),
+		...scheduledTaskDateProperties(template, occurrenceDate),
 		[taskProperty.status]: { status: { name: "Not started" } },
-		[taskProperty.due]: { date: { start: dueDate } },
 		[taskProperty.completedAt]: { date: null },
 		[taskProperty.repeatOf]: relationValue([rootTaskId]),
 		[taskProperty.occurrenceKey]: richTextValue(occurrenceKey),
+	};
+}
+
+export function scheduledTaskDates(
+	template: Pick<TaskTemplate, "scheduleOn" | "dueOffsetDays">,
+	occurrenceDate: string,
+): { readonly start: string | null; readonly due: string | null } {
+	if (template.scheduleOn === scheduleOn.due) {
+		return { start: null, due: occurrenceDate };
+	}
+
+	const due =
+		template.dueOffsetDays === null
+			? null
+			: Option.getOrThrowWith(
+					calendarDateAfterDays(occurrenceDate, template.dueOffsetDays),
+					() => new InvalidOccurrenceDateError(occurrenceDate),
+				);
+	return { start: occurrenceDate, due };
+}
+
+export function scheduledTaskDateProperties(
+	template: Pick<TaskTemplate, "scheduleOn" | "dueOffsetDays">,
+	occurrenceDate: string,
+): NonNullable<CreatePageParameters["properties"]> {
+	const dates = scheduledTaskDates(template, occurrenceDate);
+	return {
+		[taskProperty.start]: { date: dates.start === null ? null : { start: dates.start } },
+		[taskProperty.due]: { date: dates.due === null ? null : { start: dates.due } },
 	};
 }
 
@@ -167,4 +233,11 @@ export function relationValue(ids: ReadonlyArray<string>) {
 
 function invalid(message: string): TemplateParseResult {
 	return { ok: false, message };
+}
+
+class InvalidOccurrenceDateError extends Error {
+	constructor(value: string) {
+		super(`Invalid occurrence date: ${value}`);
+		this.name = "InvalidOccurrenceDateError";
+	}
 }

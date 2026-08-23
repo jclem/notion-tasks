@@ -68,6 +68,14 @@ export function checkboxProperty(page: PageObjectResponse, name: string): Option
 	);
 }
 
+/** Reads a populated number property. */
+export function numberProperty(page: PageObjectResponse, name: string): Option.Option<number> {
+	return Option.fromNullishOr(page.properties[name]).pipe(
+		Option.filter(isNumberProperty),
+		Option.flatMap(({ number }) => Option.fromNullishOr(number)),
+	);
+}
+
 /** Reads all visible page IDs from a relation property. */
 export function relationPropertyIds(
 	page: PageObjectResponse,
@@ -94,6 +102,7 @@ type DateProperty = Extract<PageProperty, { type: "date" }>;
 type TitleProperty = Extract<PageProperty, { type: "title" }>;
 type SelectProperty = Extract<PageProperty, { type: "select" }>;
 type CheckboxProperty = Extract<PageProperty, { type: "checkbox" }>;
+type NumberProperty = Extract<PageProperty, { type: "number" }>;
 type RelationProperty = Extract<PageProperty, { type: "relation" }>;
 type StatusProperty = Extract<PageProperty, { type: "status" }>;
 
@@ -115,6 +124,10 @@ function isSelectProperty(property: PageProperty): property is SelectProperty {
 
 function isCheckboxProperty(property: PageProperty): property is CheckboxProperty {
 	return property.type === "checkbox";
+}
+
+function isNumberProperty(property: PageProperty): property is NumberProperty {
+	return property.type === "number";
 }
 
 function isRelationProperty(property: PageProperty): property is RelationProperty {
