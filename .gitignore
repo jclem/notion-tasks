@@ -1,4 +1,5 @@
 .notion/
+.env
 dist/
 node_modules/
 vendor/
