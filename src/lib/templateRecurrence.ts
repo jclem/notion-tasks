@@ -62,8 +62,8 @@ export const updateTemplateDiagnostics = Effect.fn(function* (
 });
 
 /**
- * Applies template-owned fields to all instances and reconciles a regular
- * template's six-month materialization window.
+ * Applies template-owned fields to all instances, copies template content into
+ * new tasks, and reconciles a regular template's six-month materialization window.
  */
 export const reconcileTemplate = Effect.fn(function* (
 	template: TaskTemplate,
@@ -78,7 +78,8 @@ export const reconcileTemplate = Effect.fn(function* (
 		return;
 	}
 
-	const root = yield* ensureRootTask(template, tasksDataSourceId, instances);
+	const templateMarkdown = yield* notion.pages.retrieveMarkdown({ page_id: template.page.id });
+	const root = yield* ensureRootTask(template, tasksDataSourceId, instances, templateMarkdown);
 	for (const duplicateId of root.duplicateIds) {
 		yield* notion.pages.update({ page_id: duplicateId, in_trash: true });
 	}
@@ -131,7 +132,7 @@ export const reconcileTemplate = Effect.fn(function* (
 		const occurrence = yield* notion.pages.create({
 			parent: { data_source_id: tasksDataSourceId },
 			properties: regularOccurrenceCreateProperties(template, root.page.id, dueDate),
-			children: [],
+			markdown: templateMarkdown,
 		});
 		yield* notion.pages.update({ page_id: occurrence.id, is_locked: true });
 	}
@@ -152,6 +153,7 @@ function ensureRootTask(
 	template: TaskTemplate,
 	tasksDataSourceId: string,
 	instances: ReadonlyArray<PageObjectResponse>,
+	templateMarkdown: string,
 ) {
 	return Effect.gen(function* () {
 		const notion = yield* NotionEffect;
@@ -195,7 +197,7 @@ function ensureRootTask(
 				),
 				[taskProperty.repeatOf]: relationValue([]),
 			},
-			children: [],
+			markdown: templateMarkdown,
 		});
 		yield* ensureRootRelations(template, page);
 		return { page, created: true, duplicateIds: [] as ReadonlyArray<string> } as const;

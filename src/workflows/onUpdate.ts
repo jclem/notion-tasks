@@ -12,7 +12,8 @@ import { workflowLayer } from "../lib/workflowLayer.js";
 /** Compiles and reconciles a Task Template whenever it changes. */
 export default createWorkflow({
 	name: "Update task template",
-	description: "Compiles a friendly schedule and synchronizes all task instances.",
+	description:
+		"Compiles a friendly schedule, synchronizes instances, and copies content into new tasks.",
 	triggers: [triggers.notionPageCreated(), triggers.notionPageUpdated()],
 	handler: (event, context) =>
 		Effect.runPromise(

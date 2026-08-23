@@ -12,6 +12,7 @@ import { RateLimiter } from "effect/unstable/persistence";
 import { EffectStep } from "./effectStep.js";
 
 const rateLimiterLayer = RateLimiter.layer.pipe(Layer.provide(RateLimiter.layerStoreMemory));
+type GetPageMarkdownParameters = Parameters<Client["pages"]["retrieveMarkdown"]>[0];
 
 /** The maximum number of Notion API requests started per second. */
 export const notionRequestsPerSecond = 3;
@@ -41,7 +42,8 @@ export function notionEffectLayer(client: Client) {
  * Every public operation creates a durable step keyed by its name and a SHA-256
  * hash of its JSON-serialized arguments. Requests are limited to three calls per
  * second. Page-returning operations fail unless the API supplies a complete page
- * object with properties.
+ * object with properties. Markdown reads fail rather than silently returning a
+ * truncated page or omitting unsupported blocks.
  *
  * @param client - The Notion SDK client supplied by the workflow context.
  * @returns An Effect that produces the wrapped Notion operations.
@@ -73,6 +75,19 @@ const makeNotionEffect = Effect.fn(function* (client: Client) {
 			Effect.filterOrFail(isFullPage, () => new FullPageExpectedError({ operation })),
 		);
 	};
+	const completeMarkdown = (
+		operation: string,
+		response: Awaited<ReturnType<Client["pages"]["retrieveMarkdown"]>>,
+	) =>
+		response.truncated || response.unknown_block_ids.length > 0
+			? Effect.fail(
+					new CompletePageMarkdownExpectedError({
+						operation,
+						truncated: response.truncated,
+						unknownBlockIds: response.unknown_block_ids,
+					}),
+				)
+			: Effect.succeed(response.markdown);
 
 	return {
 		pages: {
@@ -98,6 +113,18 @@ const makeNotionEffect = Effect.fn(function* (client: Client) {
 					parameters,
 					request("pages.update", () => client.pages.update(parameters)).pipe(
 						Effect.flatMap((page) => fullPage("pages.update", page)),
+					),
+				),
+			retrieveMarkdown: (parameters: GetPageMarkdownParameters) =>
+				operation(
+					"pages.retrieveMarkdown",
+					parameters,
+					request("pages.retrieveMarkdown", () =>
+						client.pages.retrieveMarkdown(parameters),
+					).pipe(
+						Effect.flatMap((response) =>
+							completeMarkdown("pages.retrieveMarkdown", response),
+						),
 					),
 				),
 		},
@@ -165,6 +192,14 @@ class NotionRequestError extends Data.TaggedError("NotionRequestError")<{
 
 class FullPageExpectedError extends Data.TaggedError("FullPageExpectedError")<{
 	readonly operation: string;
+}> {}
+
+class CompletePageMarkdownExpectedError extends Data.TaggedError(
+	"CompletePageMarkdownExpectedError",
+)<{
+	readonly operation: string;
+	readonly truncated: boolean;
+	readonly unknownBlockIds: ReadonlyArray<string>;
 }> {}
 
 class ArgumentsHashError extends Data.TaggedError("ArgumentsHashError")<{

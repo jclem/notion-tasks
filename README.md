@@ -126,7 +126,11 @@ the page belongs to `TASK_TEMPLATES_DATA_SOURCE_ID`.
 3. Copy `Title`, `Notes`, `Context`, and `Template` to every instance, including
    completed history. `Status`, `Due`, and `Completed At` are not overwritten by
    ordinary template synchronization.
-4. For `Regularly`, reconcile dates after the current Eastern day through six
+4. Copy the template page body into newly created root and recurrence tasks.
+   Page content is copy-on-create: later template edits do not overwrite task
+   checklists or other instance-specific content. The Worker fails visibly instead
+   of silently copying a truncated body or omitting unsupported blocks.
+5. For `Regularly`, reconcile dates after the current Eastern day through six
    calendar months ahead. Exact matches are reused, surplus pages are trashed,
    existing pages are rescheduled where possible, and missing dates are created.
 
@@ -140,8 +144,9 @@ The `onCompletion` workflow reacts only when a task is `Done` and has no
 template.
 
 For an enabled `After completion` template, it calculates the first RRULE occurrence
-after the Eastern completion date and creates exactly one new, unlocked task. The new
-task points to the original root through `Repeat Of`; a chain never changes roots.
+after the Eastern completion date and creates exactly one new, unlocked task with a
+copy of the template page body. The new task points to the original root through
+`Repeat Of`; a chain never changes roots.
 
 The occurrence key is derived from the completed task ID. Before creating a task, the
 Worker queries for that key, so retries and duplicate page events converge on the same

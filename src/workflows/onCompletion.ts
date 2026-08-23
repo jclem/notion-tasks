@@ -24,7 +24,8 @@ import { workflowLayer } from "../lib/workflowLayer.js";
 /** Records completion and materializes one after-completion recurrence. */
 export default createWorkflow({
 	name: "Complete task",
-	description: "Records completion and creates the next after-completion task when configured.",
+	description:
+		"Records completion and creates the next after-completion task with template content.",
 	triggers: [triggers.notionPageUpdated()],
 	handler: (event, context) =>
 		Effect.runPromise(
@@ -114,9 +115,10 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 		return;
 	}
 
+	const templateMarkdown = yield* notion.pages.retrieveMarkdown({ page_id: templatePage.id });
 	yield* notion.pages.create({
 		parent: { data_source_id: config.tasksDataSourceId },
 		properties: newTaskProperties(parsed.template, rootTaskId, dueDate.value, occurrenceKey),
-		children: [],
+		markdown: templateMarkdown,
 	});
 });
