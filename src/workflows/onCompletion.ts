@@ -1,113 +1,124 @@
-import { type CreatePageParameters, type PageObjectResponse } from "@notionhq/client";
-import { NotionPageUpdatedEvent, triggers } from "@notionhq/workers/alpha/triggers";
+import { triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
-import { Data, Effect, HashSet, Match, Option, pipe, Record, Result } from "effect";
+import { DateTime, Effect, Option } from "effect";
 import { dueDateFromCompletion } from "../lib/dateUtils.js";
+import { EffectStep } from "../lib/effectStep.js";
 import { NotionEffect } from "../lib/notionEffect.js";
-import { richTextProperty } from "../lib/notionProperties.js";
+import { pageIdFromUrl } from "../lib/notionIds.js";
+import {
+	datePropertyStart,
+	relationPropertyIds,
+	statusPropertyName,
+} from "../lib/notionProperties.js";
+import { readTaskConfig } from "../lib/taskConfig.js";
+import {
+	newTaskProperties,
+	parseTaskTemplate,
+	relationValue,
+	repeatMode,
+	taskProperty,
+	templateProperty,
+} from "../lib/taskTemplate.js";
 import { workflowLayer } from "../lib/workflowLayer.js";
 
-/**
- * Records a task's completion time and creates its next occurrence when it has
- * a supported Repeat on Completion value.
- */
+/** Records completion and materializes one after-completion recurrence. */
 export default createWorkflow({
-	name: "On Completion",
-	description: "Processes tasks upon completion",
+	name: "Complete task",
+	description:
+		"Records completion and creates the next after-completion task with template content.",
 	triggers: [triggers.notionPageUpdated()],
 	handler: (event, context) =>
-		Effect.runPromise(program(event).pipe(Effect.provide(workflowLayer(context)))),
+		Effect.runPromise(
+			program(event.url, event.timestamp).pipe(Effect.provide(workflowLayer(context))),
+		),
 });
 
-const program = Effect.fn(function* (event: NotionPageUpdatedEvent) {
-	const pageId = event.url?.split("/").at(-1);
-	const completedAt = event.timestamp;
-	if (!pageId || !completedAt) {
+const program = Effect.fn(function* (url: string | null, eventTimestamp: string | null) {
+	const pageId = pageIdFromUrl(url);
+	if (Option.isNone(pageId)) {
 		return;
 	}
 
+	const step = yield* EffectStep;
 	const notion = yield* NotionEffect;
-	const page = yield* notion.pages.retrieve({ page_id: pageId });
+	const config = yield* step("Read task configuration", readTaskConfig);
+	const page = yield* notion.pages.retrieve({ page_id: pageId.value });
+	if (
+		page.parent.type !== "data_source_id" ||
+		page.parent.data_source_id !== config.tasksDataSourceId ||
+		Option.getOrElse(statusPropertyName(page, taskProperty.status), () => "") !== "Done" ||
+		Option.isSome(datePropertyStart(page, taskProperty.completedAt))
+	) {
+		return;
+	}
+
+	const completedAt =
+		eventTimestamp ??
+		(yield* step(
+			"Determine completion time",
+			DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+		));
+	const rootTaskId = relationPropertyIds(page, taskProperty.repeatOf).pipe(
+		Option.flatMap((ids) => Option.fromNullishOr(ids[0])),
+		Option.getOrElse(() => page.id),
+	);
 
 	yield* notion.pages.update({
 		page_id: page.id,
 		properties: {
-			"Completed At": {
-				date: { start: completedAt },
-			},
+			[taskProperty.completedAt]: { date: { start: completedAt } },
+			[taskProperty.repeatOf]: relationValue([rootTaskId]),
 		},
 	});
 
-	const due = richTextProperty(page, "Repeat on Completion").pipe(
-		Option.flatMap((rule) => dueDateFromCompletion(completedAt, rule)),
+	const templateId = relationPropertyIds(page, taskProperty.template).pipe(
+		Option.flatMap((ids) => Option.fromNullishOr(ids[0])),
 	);
-	if (Option.isNone(due)) {
+	if (Option.isNone(templateId)) {
 		return;
 	}
 
-	const parent = yield* pageParent(page);
+	const templatePage = yield* notion.pages.retrieve({ page_id: templateId.value });
+	const parsed = parseTaskTemplate(templatePage);
+	if (
+		!parsed.ok ||
+		!parsed.template.enabled ||
+		parsed.template.mode !== repeatMode.afterCompletion
+	) {
+		return;
+	}
+
+	if (Option.getOrUndefined(parsed.template.rootTaskId) !== rootTaskId) {
+		yield* notion.pages.update({
+			page_id: templatePage.id,
+			properties: { [templateProperty.rootTask]: relationValue([rootTaskId]) },
+		});
+	}
+
+	const dueDate = dueDateFromCompletion(completedAt, parsed.template.compiled.rrule);
+	if (Option.isNone(dueDate)) {
+		return;
+	}
+
+	const occurrenceKey = `completion:${page.id}`;
+	const existing = yield* notion.dataSources.queryPages({
+		data_source_id: config.tasksDataSourceId,
+		filter: {
+			and: [
+				{ property: taskProperty.template, relation: { contains: templatePage.id } },
+				{ property: taskProperty.occurrenceKey, rich_text: { equals: occurrenceKey } },
+			],
+		},
+		page_size: 1,
+	});
+	if (existing.length > 0) {
+		return;
+	}
+
+	const templateMarkdown = yield* notion.pages.retrieveMarkdown({ page_id: templatePage.id });
 	yield* notion.pages.create({
-		parent,
-		properties: repeatedTaskProperties(page, due.value),
-		children: [],
+		parent: { data_source_id: config.tasksDataSourceId },
+		properties: newTaskProperties(parsed.template, rootTaskId, dueDate.value, occurrenceKey),
+		markdown: templateMarkdown,
 	});
 });
-
-function pageParent(
-	page: PageObjectResponse,
-): Effect.Effect<NonNullable<CreatePageParameters["parent"]>, InvalidPageParentError> {
-	return Match.value(page.parent).pipe(
-		Match.when({ type: "data_source_id" }, ({ data_source_id }) =>
-			Effect.succeed({ data_source_id }),
-		),
-		Match.when({ type: "database_id" }, ({ database_id }) => Effect.succeed({ database_id })),
-		Match.orElse(() => Effect.fail(new InvalidPageParentError({ pageId: page.id }))),
-	);
-}
-
-function repeatedTaskProperties(
-	page: PageObjectResponse,
-	due: string,
-): NonNullable<CreatePageParameters["properties"]> {
-	const properties = pipe(
-		page.properties,
-		Record.filterMap((property) => {
-			if (!HashSet.has(writablePropertyTypes, property.type)) {
-				return Result.failVoid;
-			}
-
-			const { id: _id, ...value } = property;
-			return Result.succeed(value);
-		}),
-	);
-
-	return {
-		...properties,
-		"Completed At": { date: null },
-		Due: { date: { start: due } },
-		Status: { status: { name: "Not started" } },
-	} satisfies NonNullable<CreatePageParameters["properties"]>;
-}
-
-class InvalidPageParentError extends Data.TaggedError("InvalidPageParentError")<{
-	readonly pageId: string;
-}> {}
-
-const writablePropertyTypes: HashSet.HashSet<string> = HashSet.make(
-	"title",
-	"rich_text",
-	"number",
-	"url",
-	"select",
-	"multi_select",
-	"people",
-	"email",
-	"phone_number",
-	"date",
-	"checkbox",
-	"relation",
-	"files",
-	"status",
-	"place",
-	"verification",
-);

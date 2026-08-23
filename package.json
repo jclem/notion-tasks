@@ -5,7 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"build": "notion-workers build",
-		"check": "tsc --noEmit"
+		"check": "tsc --noEmit",
+		"test": "node --import tsx --test test/**/*.test.ts"
 	},
 	"dependencies": {
 		"@effect/platform-node": "^4.0.0-rc.111",

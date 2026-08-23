@@ -36,9 +36,66 @@ export function datePropertyStart(page: PageObjectResponse, name: string): Optio
 	);
 }
 
+/** Reads the concatenated plain text from the page's title property. */
+export function titleProperty(page: PageObjectResponse): Option.Option<string> {
+	return pipe(
+		Object.values(page.properties),
+		Array.findFirst(isTitleProperty),
+		Option.map(({ title }) =>
+			pipe(
+				title,
+				Array.map(({ plain_text }) => plain_text),
+				Array.join(""),
+			),
+		),
+	);
+}
+
+/** Reads the selected option name from a select property. */
+export function selectPropertyName(page: PageObjectResponse, name: string): Option.Option<string> {
+	return Option.fromNullishOr(page.properties[name]).pipe(
+		Option.filter(isSelectProperty),
+		Option.flatMap(({ select }) => Option.fromNullishOr(select)),
+		Option.map(({ name }) => name),
+	);
+}
+
+/** Reads a checkbox property. */
+export function checkboxProperty(page: PageObjectResponse, name: string): Option.Option<boolean> {
+	return Option.fromNullishOr(page.properties[name]).pipe(
+		Option.filter(isCheckboxProperty),
+		Option.map(({ checkbox }) => checkbox),
+	);
+}
+
+/** Reads all visible page IDs from a relation property. */
+export function relationPropertyIds(
+	page: PageObjectResponse,
+	name: string,
+): Option.Option<ReadonlyArray<string>> {
+	return Option.fromNullishOr(page.properties[name]).pipe(
+		Option.filter(isRelationProperty),
+		Option.map(({ relation }) => relation.map(({ id }) => id)),
+	);
+}
+
+/** Reads the option name from a status property. */
+export function statusPropertyName(page: PageObjectResponse, name: string): Option.Option<string> {
+	return Option.fromNullishOr(page.properties[name]).pipe(
+		Option.filter(isStatusProperty),
+		Option.flatMap(({ status }) => Option.fromNullishOr(status)),
+		Option.map(({ name }) => name),
+	);
+}
+
 type PageProperty = PageObjectResponse["properties"][string];
 type RichTextProperty = Extract<PageProperty, { type: "rich_text" }>;
 type DateProperty = Extract<PageProperty, { type: "date" }>;
+type TitleProperty = Extract<PageProperty, { type: "title" }>;
+type SelectProperty = Extract<PageProperty, { type: "select" }>;
+type CheckboxProperty = Extract<PageProperty, { type: "checkbox" }>;
+type RelationProperty = Extract<PageProperty, { type: "relation" }>;
+type StatusProperty = Extract<PageProperty, { type: "status" }>;
 
 function isRichTextProperty(property: PageProperty): property is RichTextProperty {
 	return property.type === "rich_text";
@@ -46,4 +103,24 @@ function isRichTextProperty(property: PageProperty): property is RichTextPropert
 
 function isDateProperty(property: PageProperty): property is DateProperty {
 	return property.type === "date";
+}
+
+function isTitleProperty(property: PageProperty): property is TitleProperty {
+	return property.type === "title";
+}
+
+function isSelectProperty(property: PageProperty): property is SelectProperty {
+	return property.type === "select";
+}
+
+function isCheckboxProperty(property: PageProperty): property is CheckboxProperty {
+	return property.type === "checkbox";
+}
+
+function isRelationProperty(property: PageProperty): property is RelationProperty {
+	return property.type === "relation";
+}
+
+function isStatusProperty(property: PageProperty): property is StatusProperty {
+	return property.type === "status";
 }
