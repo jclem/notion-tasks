@@ -10,7 +10,8 @@ RRULEs in your normal task views.
 
 The [Tasks skill](docs/SKILL.md) is the skill an agent should use to manage your
 tasks. It explains how to create one-time tasks, manage repeating tasks, and work
-safely with the two data sources.
+safely with the two data sources. Before using it, replace its `Tasks` and
+`Task Templates` links with links to your own Notion data sources.
 
 ## How it works
 

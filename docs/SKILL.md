@@ -12,6 +12,9 @@ database and repeating-task definitions in
 Treat Task Templates as the source of truth for repetition. Do not manually create
 a batch of future recurring tasks; the worker creates and maintains them.
 
+**Before using this skill:** Replace the Tasks and Task Templates links above
+with links to the Notion data sources the agent should manage.
+
 # Choose the correct database
 
 - Create a one-time action in **Tasks**.
