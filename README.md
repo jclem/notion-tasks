@@ -72,6 +72,18 @@ ntn workers deploy
 ntn workers env push
 ```
 
+The `Deploy` GitHub Actions workflow also deploys after every push to `main`. You
+can run it by hand with the “Run workflow” button. It rebuilds the ignored
+`workers.json` file from these repository variables:
+
+- `NOTION_WORKERS_CONFIG_VERSION`
+- `NOTION_ENV`
+- `NOTION_WORKSPACE_ID`
+- `NOTION_WORKER_ID`
+
+It reads `NOTION_API_TOKEN` from a repository secret. The workflow stops with a
+clear error when the secret or any required variable is missing.
+
 Set `nightlyReconcile` to run every day at midnight in `America/New_York`.
 
 Set the `onUpdate` property trigger to watch `Name`, `Enabled`, `Repeat Mode`,
