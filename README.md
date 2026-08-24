@@ -7,19 +7,15 @@ RRULEs in your normal task views.
 
 ## How it works
 
-The system uses three Notion data sources:
+The system uses two main Notion data sources:
 
 - `Tasks` holds the tasks you work on and the tasks you have finished.
 - `Task Templates` holds the rules for every repeating task.
-- `Contexts` holds shared context names. You can use a Contexts data source you
-  already have.
 
 A task made from a template is called an **instance**.
 
 ```text
 Task instance ──Template──▶ Task Template
-      │                           │
-      └──Context──▶ Context ◀──Context
 ```
 
 The rules are simple:
