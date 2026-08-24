@@ -55,7 +55,7 @@ Share the Tasks, Task Templates, and Contexts data sources with the Notion
 connection. If a related data source is not shared, its relations may look empty
 to the API.
 
-### Check and deploy
+### Check the project
 
 Run all checks:
 
@@ -65,24 +65,61 @@ npm run check
 npm run build
 ```
 
-Then deploy the Worker and send it the `.env` settings:
+### Set up automatic deployment
+
+The `Deploy` GitHub Actions workflow deploys after every push to `main`. It can
+also be run by hand. Before using it, add four repository variables and one
+repository secret.
+
+First, make sure your local `workers.json` points to the Worker you want to
+deploy. This file is ignored by Git because it identifies your workspace and
+deployed Worker. The GitHub Actions workflow rebuilds the file on each run.
+
+In GitHub, open **Settings → Secrets and variables → Actions → Variables**. Add
+these repository variables:
+
+| `workers.json` field | Repository variable             |
+| -------------------- | ------------------------------- |
+| `version`            | `NOTION_WORKERS_CONFIG_VERSION` |
+| `environment`        | `NOTION_ENV`                    |
+| `workspaceId`        | `NOTION_WORKSPACE_ID`           |
+| `workerId`           | `NOTION_WORKER_ID`              |
+
+You can copy all four values with the GitHub CLI instead:
+
+```sh
+gh variable set NOTION_WORKERS_CONFIG_VERSION --body "$(jq -r .version workers.json)"
+gh variable set NOTION_ENV --body "$(jq -r .environment workers.json)"
+gh variable set NOTION_WORKSPACE_ID --body "$(jq -r .workspaceId workers.json)"
+gh variable set NOTION_WORKER_ID --body "$(jq -r .workerId workers.json)"
+```
+
+Next, open **Settings → Secrets and variables → Actions → Secrets**. Add a
+repository secret named `NOTION_API_TOKEN`. It is the only secret used by the
+workflow. You can also add it from a hidden terminal prompt:
+
+```sh
+gh secret set NOTION_API_TOKEN
+```
+
+The workflow stops with a clear error when a required value is missing. The token
+is only available to the final deployment step. It is not available to checkout,
+mise, npm, or the Notion CLI installer.
+
+To deploy by hand, open **Actions → Deploy → Run workflow**. You can also run:
+
+```sh
+gh workflow run deploy.yml
+```
+
+### Deploy from your computer
+
+To deploy without GitHub Actions, run:
 
 ```sh
 ntn workers deploy
 ntn workers env push
 ```
-
-The `Deploy` GitHub Actions workflow also deploys after every push to `main`. You
-can run it by hand with the “Run workflow” button. It rebuilds the ignored
-`workers.json` file from these repository variables:
-
-- `NOTION_WORKERS_CONFIG_VERSION`
-- `NOTION_ENV`
-- `NOTION_WORKSPACE_ID`
-- `NOTION_WORKER_ID`
-
-It reads `NOTION_API_TOKEN` from a repository secret. The workflow stops with a
-clear error when the secret or any required variable is missing.
 
 Set `nightlyReconcile` to run every day at midnight in `America/New_York`.
 
