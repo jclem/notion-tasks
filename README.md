@@ -60,42 +60,40 @@ Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
 
 ### Task Templates
 
-| Property               | Notion type                    | Ownership and behavior                                                                                       |
-| ---------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `Name`                 | Title                          | The title copied to every instance. The title property may be renamed because the Worker finds it by type.   |
-| `Enabled`              | Checkbox                       | Disabled templates do not create or reconcile instances. Existing tasks remain.                              |
-| `Repeat Mode`          | Select                         | Exactly `Regularly` or `After completion`.                                                                   |
-| `Schedule`             | Text                           | User-edited friendly schedule. This is the normal recurrence UI.                                             |
-| `Starts`               | Date                           | Required date-only first occurrence and DTSTART anchor for regular recurrence.                               |
-| `Schedule On`          | Select                         | `Due` or `Start`. Empty defaults to `Due` for existing templates. `Due` means Start and Due on the same day. |
-| `Due Offset Days`      | Number                         | With `Start`, an optional non-negative whole calendar-day offset. Empty means the task has no Due date.      |
-| `Notes`                | Text                           | Copied to every instance. Useful for details such as an amount or payment method.                            |
-| `Context`              | Relation → Contexts            | Copied to all instances.                                                                                     |
-| `Root Task`            | Relation → Tasks               | Worker-managed single relation to the first series instance.                                                 |
-| `Instances`            | Reciprocal relation from Tasks | All tasks whose `Template` points here. Useful in the UI; the Worker queries from the Tasks side.            |
-| `RRULE`                | Text                           | Hidden, Worker-managed normalized RRULE.                                                                     |
-| `Schedule Description` | Text                           | Worker-managed canonical display, such as `Every February on the 1st Saturday`.                              |
-| `Schedule Error`       | Text                           | Worker-managed validation feedback. Empty for a valid template.                                              |
+| Property               | Notion type                    | Ownership and behavior                                                                                     |
+| ---------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `Name`                 | Title                          | The title copied to every instance. The title property may be renamed because the Worker finds it by type. |
+| `Enabled`              | Checkbox                       | Disabled templates do not create or reconcile instances. Existing tasks remain.                            |
+| `Repeat Mode`          | Select                         | Exactly `Regularly` or `After completion`.                                                                 |
+| `Schedule`             | Text                           | User-edited friendly schedule. This is the normal recurrence UI.                                           |
+| `Starts`               | Date                           | Required date-only first occurrence and DTSTART anchor for regular recurrence.                             |
+| `Due Offset Days`      | Number                         | Optional non-negative whole calendar-day offset after Start. Empty means the task has no Due date.         |
+| `Notes`                | Text                           | Copied to every instance. Useful for details such as an amount or payment method.                          |
+| `Context`              | Relation → Contexts            | Copied to all instances.                                                                                   |
+| `Root Task`            | Relation → Tasks               | Worker-managed single relation to the first series instance.                                               |
+| `Instances`            | Reciprocal relation from Tasks | All tasks whose `Template` points here. Useful in the UI; the Worker queries from the Tasks side.          |
+| `RRULE`                | Text                           | Hidden, Worker-managed normalized RRULE.                                                                   |
+| `Schedule Description` | Text                           | Worker-managed canonical display, such as `Every February on the 1st Saturday`.                            |
+| `Schedule Error`       | Text                           | Worker-managed validation feedback. Empty for a valid template.                                            |
 
 To make another template property propagate, add it to both data sources and to
 `synchronizedTaskProperties` in `src/lib/taskTemplate.ts`.
 
 ### Start and due dates
 
-Each template chooses whether its recurrence date is also a deadline:
+Every generated task has its recurrence date in `Start`. `Due Offset Days`
+determines whether it also has a deadline:
 
-- `Schedule On = Due`: generated tasks have the occurrence date in both `Start`
-  and `Due`. `Due Offset Days` must be empty.
-- `Schedule On = Start`: generated tasks have the occurrence date in `Start`.
-  Leave `Due Offset Days` empty for no due date, use `0` for the same day, or use
-  a positive whole number for a later due date.
+- Leave it empty for no due date.
+- Use `0` for a due date on the same day as Start.
+- Use a positive whole number for a later due date.
 
 Offsets use calendar days. For example, a September 20 occurrence scheduled on
 Start with `Due Offset Days = 14` has Start `2026-09-20` and Due `2026-10-04`.
-Regular reconciliation can migrate future instances between date-placement modes
-without creating a second series. Completed history is not rewritten. For
-`After completion`, the next occurrence date is calculated from completion first,
-then placed in Start and, when configured, Due using these settings.
+Regular reconciliation migrates future due-only instances to the Start-based model
+without creating a second series. Completed history is not rewritten. For `After
+completion`, the next occurrence date is calculated from completion first, then
+placed in Start and, when configured, Due using these settings.
 
 ### Contexts
 
@@ -270,4 +268,4 @@ Finally, configure `nightlyReconcile` to run every day at midnight in
 `America/New_York`.
 
 Configure `onUpdate` property triggers for `Name`, `Enabled`, `Repeat Mode`,
-`Schedule`, `Starts`, `Schedule On`, `Due Offset Days`, `Notes`, and `Context`.
+`Schedule`, `Starts`, `Due Offset Days`, `Notes`, and `Context`.

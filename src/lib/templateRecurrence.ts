@@ -14,7 +14,6 @@ import {
 	relationValue,
 	repeatMode,
 	richTextValue,
-	scheduleOn,
 	scheduledTaskDateProperties,
 	scheduledTaskDates,
 	synchronizedTaskProperties,
@@ -106,16 +105,12 @@ export const reconcileTemplate = Effect.fn(function* (
 		);
 	}
 
-	const primaryDateProperty =
-		template.scheduleOn === scheduleOn.start ? taskProperty.start : taskProperty.due;
-	const fallbackDateProperty =
-		template.scheduleOn === scheduleOn.start ? taskProperty.due : taskProperty.start;
 	const plan = recurrencePlan(
 		instances,
 		schedule.value.occurrenceDates,
 		schedule.value.cutoff,
-		primaryDateProperty,
-		fallbackDateProperty,
+		taskProperty.start,
+		taskProperty.due,
 	);
 	for (const { occurrence, occurrenceDate } of plan.synchronize) {
 		const properties = regularOccurrenceUpdateProperties(

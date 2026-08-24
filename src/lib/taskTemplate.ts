@@ -27,7 +27,6 @@ export const templateProperty = {
 	rrule: "RRULE",
 	scheduleDescription: "Schedule Description",
 	scheduleError: "Schedule Error",
-	scheduleOn: "Schedule On",
 	dueOffsetDays: "Due Offset Days",
 } as const;
 
@@ -49,13 +48,7 @@ export const repeatMode = {
 	afterCompletion: "After completion",
 } as const;
 
-export const scheduleOn = {
-	due: "Due",
-	start: "Start",
-} as const;
-
 export type RepeatMode = (typeof repeatMode)[keyof typeof repeatMode];
-export type ScheduleOn = (typeof scheduleOn)[keyof typeof scheduleOn];
 
 export type TaskTemplate = {
 	readonly page: PageObjectResponse;
@@ -63,7 +56,6 @@ export type TaskTemplate = {
 	readonly enabled: boolean;
 	readonly mode: RepeatMode;
 	readonly starts: string;
-	readonly scheduleOn: ScheduleOn;
 	readonly dueOffsetDays: number | null;
 	readonly schedule: string;
 	readonly notes: string;
@@ -116,14 +108,6 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 		return invalid(`Could not understand schedule: ${schedule.value}`);
 	}
 
-	const selectedScheduleOn = selectPropertyName(page, templateProperty.scheduleOn);
-	const scheduleOnValue = Option.getOrElse(selectedScheduleOn, () => scheduleOn.due);
-	if (scheduleOnValue !== scheduleOn.due && scheduleOnValue !== scheduleOn.start) {
-		return invalid(
-			`${templateProperty.scheduleOn} must be ${scheduleOn.due} or ${scheduleOn.start}.`,
-		);
-	}
-
 	const dueOffsetDays = numberProperty(page, templateProperty.dueOffsetDays);
 	if (
 		Option.isSome(dueOffsetDays) &&
@@ -131,10 +115,6 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 	) {
 		return invalid(`${templateProperty.dueOffsetDays} must be a non-negative whole number.`);
 	}
-	if (scheduleOnValue === scheduleOn.due && Option.isSome(dueOffsetDays)) {
-		return invalid(`${templateProperty.dueOffsetDays} must be empty when scheduling on Due.`);
-	}
-
 	return {
 		ok: true,
 		template: {
@@ -143,7 +123,6 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 			enabled: enabled.value,
 			mode: mode.value,
 			starts: starts.value,
-			scheduleOn: scheduleOnValue,
 			dueOffsetDays: Option.getOrNull(dueOffsetDays),
 			schedule: schedule.value,
 			notes: Option.getOrElse(richTextProperty(page, templateProperty.notes), () => ""),
@@ -189,13 +168,9 @@ export function newTaskProperties(
 }
 
 export function scheduledTaskDates(
-	template: Pick<TaskTemplate, "scheduleOn" | "dueOffsetDays">,
+	template: Pick<TaskTemplate, "dueOffsetDays">,
 	occurrenceDate: string,
-): { readonly start: string | null; readonly due: string | null } {
-	if (template.scheduleOn === scheduleOn.due) {
-		return { start: occurrenceDate, due: occurrenceDate };
-	}
-
+): { readonly start: string; readonly due: string | null } {
 	const due =
 		template.dueOffsetDays === null
 			? null
@@ -207,12 +182,12 @@ export function scheduledTaskDates(
 }
 
 export function scheduledTaskDateProperties(
-	template: Pick<TaskTemplate, "scheduleOn" | "dueOffsetDays">,
+	template: Pick<TaskTemplate, "dueOffsetDays">,
 	occurrenceDate: string,
 ): NonNullable<CreatePageParameters["properties"]> {
 	const dates = scheduledTaskDates(template, occurrenceDate);
 	return {
-		[taskProperty.start]: { date: dates.start === null ? null : { start: dates.start } },
+		[taskProperty.start]: { date: { start: dates.start } },
 		[taskProperty.due]: { date: dates.due === null ? null : { start: dates.due } },
 	};
 }

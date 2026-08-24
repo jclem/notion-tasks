@@ -2,59 +2,58 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PageObjectResponse } from "@notionhq/client";
 import { recurrencePlan } from "../src/lib/recurrencePlan.js";
-import { parseTaskTemplate, scheduleOn, scheduledTaskDates } from "../src/lib/taskTemplate.js";
+import { parseTaskTemplate, scheduledTaskDates } from "../src/lib/taskTemplate.js";
 
 describe("scheduledTaskDates", () => {
-	it("uses the occurrence date as Start and Due by default", () => {
-		assert.deepEqual(
-			scheduledTaskDates({ scheduleOn: scheduleOn.due, dueOffsetDays: null }, "2026-09-20"),
-			{ start: "2026-09-20", due: "2026-09-20" },
-		);
+	it("supports a Start date without a Due date", () => {
+		assert.deepEqual(scheduledTaskDates({ dueOffsetDays: null }, "2026-09-20"), {
+			start: "2026-09-20",
+			due: null,
+		});
 	});
 
-	it("supports a Start date without a Due date", () => {
-		assert.deepEqual(
-			scheduledTaskDates({ scheduleOn: scheduleOn.start, dueOffsetDays: null }, "2026-09-20"),
-			{ start: "2026-09-20", due: null },
-		);
+	it("sets Start and Due to the occurrence date for a zero offset", () => {
+		assert.deepEqual(scheduledTaskDates({ dueOffsetDays: 0 }, "2026-09-20"), {
+			start: "2026-09-20",
+			due: "2026-09-20",
+		});
 	});
 
 	it("sets Due a calendar-day offset after Start", () => {
-		assert.deepEqual(
-			scheduledTaskDates({ scheduleOn: scheduleOn.start, dueOffsetDays: 14 }, "2026-09-20"),
-			{ start: "2026-09-20", due: "2026-10-04" },
-		);
+		assert.deepEqual(scheduledTaskDates({ dueOffsetDays: 14 }, "2026-09-20"), {
+			start: "2026-09-20",
+			due: "2026-10-04",
+		});
 	});
 });
 
 describe("parseTaskTemplate date placement", () => {
-	it("defaults a blank Schedule On to Due for existing templates", () => {
-		const parsed = parseTaskTemplate(templatePage(null, null));
+	it("accepts an empty Due offset", () => {
+		const parsed = parseTaskTemplate(templatePage(null));
 		assert(parsed.ok);
-		assert.equal(parsed.template.scheduleOn, scheduleOn.due);
 		assert.equal(parsed.template.dueOffsetDays, null);
 	});
 
-	it("accepts a whole-day offset when scheduling on Start", () => {
-		const parsed = parseTaskTemplate(templatePage(scheduleOn.start, 14));
+	it("accepts a whole-day Due offset", () => {
+		const parsed = parseTaskTemplate(templatePage(14));
 		assert(parsed.ok);
 		assert.equal(parsed.template.dueOffsetDays, 14);
 	});
 
-	it("rejects a Due offset when scheduling directly on Due", () => {
-		const parsed = parseTaskTemplate(templatePage(scheduleOn.due, 1));
-		assert(!parsed.ok);
-		assert.match(parsed.message, /must be empty/);
-	});
-
 	it("rejects fractional offsets", () => {
-		const parsed = parseTaskTemplate(templatePage(scheduleOn.start, 1.5));
+		const parsed = parseTaskTemplate(templatePage(1.5));
 		assert(!parsed.ok);
 		assert.match(parsed.message, /whole number/);
 	});
 
+	it("rejects negative offsets", () => {
+		const parsed = parseTaskTemplate(templatePage(-1));
+		assert(!parsed.ok);
+		assert.match(parsed.message, /non-negative/);
+	});
+
 	it("rejects a Starts value with a time", () => {
-		const page = templatePage(scheduleOn.start, null);
+		const page = templatePage(null);
 		page.properties.Starts = {
 			id: "starts",
 			type: "date",
@@ -78,7 +77,7 @@ describe("recurrencePlan date placement", () => {
 	});
 });
 
-function templatePage(scheduleOnValue: string | null, dueOffsetDays: number | null) {
+function templatePage(dueOffsetDays: number | null) {
 	return {
 		id: "template-1",
 		properties: {
@@ -94,11 +93,6 @@ function templatePage(scheduleOnValue: string | null, dueOffsetDays: number | nu
 				id: "schedule",
 				type: "rich_text",
 				rich_text: [{ plain_text: "Monthly" }],
-			},
-			"Schedule On": {
-				id: "schedule-on",
-				type: "select",
-				select: scheduleOnValue === null ? null : { name: scheduleOnValue },
 			},
 			"Due Offset Days": {
 				id: "due-offset-days",
