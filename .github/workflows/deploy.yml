@@ -1,0 +1,62 @@
+name: Deploy
+
+on:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: deploy-production
+    cancel-in-progress: false
+
+jobs:
+    deploy:
+        name: Deploy
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        env:
+            NOTION_ENV: ${{ vars.NOTION_ENV }}
+            NOTION_WORKER_ID: ${{ vars.NOTION_WORKER_ID }}
+            NOTION_WORKERS_CONFIG_VERSION: ${{ vars.NOTION_WORKERS_CONFIG_VERSION }}
+            NOTION_WORKSPACE_ID: ${{ vars.NOTION_WORKSPACE_ID }}
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - name: Set up mise
+              uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+
+            - name: Install dependencies
+              run: mise exec -- npm ci
+
+            - name: Install Notion CLI
+              run: |
+                  curl -fsSL https://ntn.dev | bash
+                  echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+            - name: Write worker configuration
+              run: |
+                  : "${NOTION_ENV:?Set the NOTION_ENV repository variable}"
+                  : "${NOTION_WORKER_ID:?Set the NOTION_WORKER_ID repository variable}"
+                  : "${NOTION_WORKERS_CONFIG_VERSION:?Set the NOTION_WORKERS_CONFIG_VERSION repository variable}"
+                  : "${NOTION_WORKSPACE_ID:?Set the NOTION_WORKSPACE_ID repository variable}"
+
+                  jq --null-input \
+                    --arg version "$NOTION_WORKERS_CONFIG_VERSION" \
+                    --arg environment "$NOTION_ENV" \
+                    --arg workspaceId "$NOTION_WORKSPACE_ID" \
+                    --arg workerId "$NOTION_WORKER_ID" \
+                    '{version: $version, environment: $environment, workspaceId: $workspaceId, workerId: $workerId}' \
+                    > workers.json
+
+            - name: Deploy worker
+              env:
+                  NOTION_API_TOKEN: ${{ secrets.NOTION_API_TOKEN }}
+              run: |
+                  : "${NOTION_API_TOKEN:?Set the NOTION_API_TOKEN repository secret}"
+                  mise deploy
