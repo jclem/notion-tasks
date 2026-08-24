@@ -29,6 +29,54 @@ The rules are simple:
 - The Worker may change dates on future regular tasks when it checks the schedule.
   It does not change dates in finished history.
 
+## Setup
+
+### Install
+
+You need Node 22 or newer and npm 10.9.2 or newer. Install
+[mise](https://mise.jdx.dev/), then run:
+
+```sh
+mise run bootstrap
+cp .env.example .env
+```
+
+Add the data source IDs to `.env`:
+
+```dotenv
+TASKS_DATA_SOURCE_ID=...
+TASK_TEMPLATES_DATA_SOURCE_ID=...
+```
+
+Add `NOTION_API_TOKEN` when your local Worker does not already have Notion login
+details. Never commit `.env`, and never put a login token directly in the code.
+
+Share the Tasks, Task Templates, and Contexts data sources with the Notion
+connection. If a related data source is not shared, its relations may look empty
+to the API.
+
+### Check and deploy
+
+Run all checks:
+
+```sh
+npm test
+npm run check
+npm run build
+```
+
+Then deploy the Worker and send it the `.env` settings:
+
+```sh
+ntn workers deploy
+ntn workers env push
+```
+
+Set `nightlyReconcile` to run every day at midnight in `America/New_York`.
+
+Set the `onUpdate` property trigger to watch `Name`, `Enabled`, `Repeat Mode`,
+`Schedule`, `Starts`, `Due Offset Days`, `Notes`, and `Context`.
+
 ## Notion schemas
 
 Property names and option names are case-sensitive. The Worker looks for these
@@ -226,49 +274,3 @@ They are system fields, not fields you need for everyday task entry.
 
 Workflow files are stored directly in `src/workflows/`. Each filename becomes the
 workflow key used after deployment.
-
-## Local setup
-
-You need Node 22 or newer and npm 10.9.2 or newer. Install
-[mise](https://mise.jdx.dev/), then run:
-
-```sh
-mise run bootstrap
-cp .env.example .env
-```
-
-Add the data source IDs to `.env`:
-
-```dotenv
-TASKS_DATA_SOURCE_ID=...
-TASK_TEMPLATES_DATA_SOURCE_ID=...
-```
-
-Add `NOTION_API_TOKEN` when your local Worker does not already have Notion login
-details. Never commit `.env`, and never put a login token directly in the code.
-
-Share the Tasks, Task Templates, and Contexts data sources with the Notion
-connection. If a related data source is not shared, its relations may look empty
-to the API.
-
-## Check and deploy
-
-Run all checks:
-
-```sh
-npm test
-npm run check
-npm run build
-```
-
-Then deploy the Worker and send it the `.env` settings:
-
-```sh
-ntn workers deploy
-ntn workers env push
-```
-
-Set `nightlyReconcile` to run every day at midnight in `America/New_York`.
-
-Set the `onUpdate` property trigger to watch `Name`, `Enabled`, `Repeat Mode`,
-`Schedule`, `Starts`, `Due Offset Days`, `Notes`, and `Context`.
