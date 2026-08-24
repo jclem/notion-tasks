@@ -1,5 +1,8 @@
 # Notion Tasks
 
+[![CI](https://github.com/jclem/notion-tasks/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/jclem/notion-tasks/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
+[![Deploy](https://github.com/jclem/notion-tasks/actions/workflows/deploy.yml/badge.svg)](https://github.com/jclem/notion-tasks/actions/workflows/deploy.yml)
+
 Notion Tasks is a task system built around templates. It keeps repeating task rules
 in a separate Task Templates data source. You can write schedules in plain language,
 such as `Weekdays` or `1st Saturday of February`. You do not need to see or write raw
