@@ -23,7 +23,6 @@ export const templateProperty = {
 	starts: "Starts",
 	notes: "Notes",
 	context: "Context",
-	rootTask: "Root Task",
 	rrule: "RRULE",
 	scheduleDescription: "Schedule Description",
 	scheduleError: "Schedule Error",
@@ -38,7 +37,6 @@ export const taskProperty = {
 	completedAt: "Completed At",
 	notes: "Notes",
 	template: "Template",
-	repeatOf: "Repeat Of",
 	occurrenceKey: "Occurrence Key",
 	context: "Context",
 } as const;
@@ -61,7 +59,6 @@ export type TaskTemplate = {
 	readonly notes: string;
 	readonly compiled: CompiledSchedule;
 	readonly contextIds: ReadonlyArray<string>;
-	readonly rootTaskId: Option.Option<string>;
 };
 
 export type TemplateParseResult =
@@ -131,9 +128,6 @@ export function parseTaskTemplate(page: PageObjectResponse): TemplateParseResult
 				relationPropertyIds(page, templateProperty.context),
 				() => [] as ReadonlyArray<string>,
 			),
-			rootTaskId: relationPropertyIds(page, templateProperty.rootTask).pipe(
-				Option.flatMap((ids) => Option.fromNullishOr(ids[0])),
-			),
 		},
 	};
 }
@@ -153,7 +147,6 @@ export function synchronizedTaskProperties(
 /** Properties for a newly materialized task instance. */
 export function newTaskProperties(
 	template: TaskTemplate,
-	rootTaskId: string,
 	occurrenceDate: string,
 	occurrenceKey: string,
 ): NonNullable<CreatePageParameters["properties"]> {
@@ -162,7 +155,6 @@ export function newTaskProperties(
 		...scheduledTaskDateProperties(template, occurrenceDate),
 		[taskProperty.status]: { status: { name: "Not started" } },
 		[taskProperty.completedAt]: { date: null },
-		[taskProperty.repeatOf]: relationValue([rootTaskId]),
 		[taskProperty.occurrenceKey]: richTextValue(occurrenceKey),
 	};
 }

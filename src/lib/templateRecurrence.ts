@@ -1,5 +1,5 @@
 import type { CreatePageParameters, PageObjectResponse } from "@notionhq/client";
-import { Data, Effect, Option, pipe } from "effect";
+import { Data, Effect, Option } from "effect";
 import { easternDate, futureOccurrenceDates } from "./dateUtils.js";
 import { NotionEffect } from "./notionEffect.js";
 import {
@@ -11,7 +11,6 @@ import {
 import { recurrencePlan } from "./recurrencePlan.js";
 import {
 	newTaskProperties,
-	relationValue,
 	repeatMode,
 	richTextValue,
 	scheduledTaskDateProperties,
@@ -73,7 +72,7 @@ export const reconcileTemplate = Effect.fn(function* (
 	now: string,
 ) {
 	const notion = yield* NotionEffect;
-	let instances = yield* queryTemplateInstances(tasksDataSourceId, template.page.id);
+	const instances = yield* queryTemplateInstances(tasksDataSourceId, template.page.id);
 
 	if (!template.enabled) {
 		yield* synchronizeInstances(template, instances);
@@ -81,17 +80,15 @@ export const reconcileTemplate = Effect.fn(function* (
 	}
 
 	const templateMarkdown = yield* notion.pages.retrieveMarkdown({ page_id: template.page.id });
-	const root = yield* ensureRootTask(template, tasksDataSourceId, instances, templateMarkdown);
-	for (const duplicateId of root.duplicateIds) {
-		yield* notion.pages.update({ page_id: duplicateId, in_trash: true });
-	}
-	instances = instances.filter((instance) => !root.duplicateIds.includes(instance.id));
-	if (root.created) {
-		instances = [...instances, root.page];
-	}
 	yield* synchronizeInstances(template, instances);
 
-	if (template.mode !== repeatMode.regularly) {
+	if (template.mode === repeatMode.afterCompletion) {
+		yield* ensureAfterCompletionInitialTask(
+			template,
+			tasksDataSourceId,
+			instances,
+			templateMarkdown,
+		);
 		return;
 	}
 
@@ -113,12 +110,8 @@ export const reconcileTemplate = Effect.fn(function* (
 		taskProperty.due,
 	);
 	for (const { occurrence, occurrenceDate } of plan.synchronize) {
-		const properties = regularOccurrenceUpdateProperties(
-			template,
-			root.page.id,
-			occurrenceDate,
-		);
-		if (taskNeedsUpdate(occurrence, template, root.page.id, occurrenceDate)) {
+		const properties = regularOccurrenceUpdateProperties(template, occurrenceDate);
+		if (taskNeedsUpdate(occurrence, template, occurrenceDate)) {
 			yield* notion.pages.update({
 				page_id: occurrence.id,
 				properties,
@@ -130,7 +123,7 @@ export const reconcileTemplate = Effect.fn(function* (
 	for (const { occurrence, occurrenceDate } of plan.reschedule) {
 		yield* notion.pages.update({
 			page_id: occurrence.id,
-			properties: regularOccurrenceUpdateProperties(template, root.page.id, occurrenceDate),
+			properties: regularOccurrenceUpdateProperties(template, occurrenceDate),
 			is_locked: true,
 		});
 	}
@@ -142,7 +135,7 @@ export const reconcileTemplate = Effect.fn(function* (
 	for (const occurrenceDate of plan.create) {
 		const occurrence = yield* notion.pages.create({
 			parent: { data_source_id: tasksDataSourceId },
-			properties: regularOccurrenceCreateProperties(template, root.page.id, occurrenceDate),
+			properties: regularOccurrenceCreateProperties(template, occurrenceDate),
 			markdown: templateMarkdown,
 		});
 		yield* notion.pages.update({ page_id: occurrence.id, is_locked: true });
@@ -160,7 +153,7 @@ export function queryTemplateInstances(tasksDataSourceId: string, templateId: st
 	});
 }
 
-function ensureRootTask(
+function ensureAfterCompletionInitialTask(
 	template: TaskTemplate,
 	tasksDataSourceId: string,
 	instances: ReadonlyArray<PageObjectResponse>,
@@ -168,74 +161,38 @@ function ensureRootTask(
 ) {
 	return Effect.gen(function* () {
 		const notion = yield* NotionEffect;
-		const configuredRootId = Option.getOrUndefined(template.rootTaskId);
-		const rootOccurrenceKey = `root:${template.page.id}`;
-		const rootKeyInstances = instances.filter(
-			(page) =>
-				Option.getOrElse(richTextProperty(page, taskProperty.occurrenceKey), () => "") ===
-				rootOccurrenceKey,
-		);
-		const relatedRootId = pipe(
-			instances,
-			Option.fromIterable,
-			Option.flatMap((page) => relationPropertyIds(page, taskProperty.repeatOf)),
-			Option.flatMap((ids) => Option.fromNullishOr(ids[0])),
-			Option.getOrUndefined,
-		);
-		const rootId =
-			rootKeyInstances[0]?.id ?? configuredRootId ?? relatedRootId ?? instances[0]?.id;
-
-		if (rootId) {
-			const page =
-				instances.find((instance) => instance.id === rootId) ??
-				(yield* notion.pages.retrieve({ page_id: rootId }));
-			yield* ensureRootRelations(template, page);
-			return {
-				page,
-				created: false,
-				duplicateIds: rootKeyInstances.slice(1).map(({ id }) => id),
-			} as const;
+		const plan = afterCompletionInitialPlan(instances, template.page.id);
+		for (const duplicateId of plan.duplicateIds) {
+			yield* notion.pages.update({ page_id: duplicateId, in_trash: true });
 		}
 
-		const page = yield* notion.pages.create({
+		if (!plan.create) {
+			return;
+		}
+
+		yield* notion.pages.create({
 			parent: { data_source_id: tasksDataSourceId },
-			properties: {
-				...newTaskProperties(
-					template,
-					template.page.id,
-					template.starts,
-					`root:${template.page.id}`,
-				),
-				[taskProperty.repeatOf]: relationValue([]),
-			},
+			properties: newTaskProperties(template, template.starts, plan.occurrenceKey),
 			markdown: templateMarkdown,
 		});
-		yield* ensureRootRelations(template, page);
-		return { page, created: true, duplicateIds: [] as ReadonlyArray<string> } as const;
 	});
 }
 
-function ensureRootRelations(template: TaskTemplate, root: PageObjectResponse) {
-	return Effect.gen(function* () {
-		const notion = yield* NotionEffect;
-		const rootIds = Option.getOrElse(
-			relationPropertyIds(root, taskProperty.repeatOf),
-			() => [] as ReadonlyArray<string>,
-		);
-		if (rootIds.length !== 1 || rootIds[0] !== root.id) {
-			yield* notion.pages.update({
-				page_id: root.id,
-				properties: { [taskProperty.repeatOf]: relationValue([root.id]) },
-			});
-		}
-
-		if (Option.getOrUndefined(template.rootTaskId) !== root.id) {
-			yield* notion.pages.update({
-				page_id: template.page.id,
-				properties: { [templateProperty.rootTask]: relationValue([root.id]) },
-			});
-		}
-	});
+export function afterCompletionInitialPlan(
+	instances: ReadonlyArray<PageObjectResponse>,
+	templateId: string,
+) {
+	const occurrenceKey = `initial:${templateId}`;
+	const initialInstances = instances.filter(
+		(page) =>
+			Option.getOrElse(richTextProperty(page, taskProperty.occurrenceKey), () => "") ===
+			occurrenceKey,
+	);
+	return {
+		occurrenceKey,
+		create: instances.length === 0,
+		duplicateIds: initialInstances.slice(1).map(({ id }) => id),
+	} as const;
 }
 
 function synchronizeInstances(
@@ -257,12 +214,10 @@ function synchronizeInstances(
 
 function regularOccurrenceCreateProperties(
 	template: TaskTemplate,
-	rootTaskId: string,
 	occurrenceDate: string,
 ): NonNullable<CreatePageParameters["properties"]> {
 	return newTaskProperties(
 		template,
-		rootTaskId,
 		occurrenceDate,
 		`regular:${template.page.id}:${occurrenceDate}`,
 	);
@@ -270,13 +225,11 @@ function regularOccurrenceCreateProperties(
 
 function regularOccurrenceUpdateProperties(
 	template: TaskTemplate,
-	rootTaskId: string,
 	occurrenceDate: string,
 ): NonNullable<CreatePageParameters["properties"]> {
 	return {
 		...synchronizedTaskProperties(template),
 		...scheduledTaskDateProperties(template, occurrenceDate),
-		[taskProperty.repeatOf]: relationValue([rootTaskId]),
 		[taskProperty.occurrenceKey]: richTextValue(
 			`regular:${template.page.id}:${occurrenceDate}`,
 		),
@@ -295,17 +248,15 @@ function taskNeedsTemplateSync(page: PageObjectResponse, template: TaskTemplate)
 function taskNeedsUpdate(
 	page: PageObjectResponse,
 	template: TaskTemplate,
-	rootTaskId: string,
 	occurrenceDate: string,
 ): boolean {
 	const expectedDates = scheduledTaskDates(template, occurrenceDate);
 	return (
 		taskNeedsTemplateSync(page, template) ||
-		dateValue(page, taskProperty.start) !== (expectedDates.start ?? "") ||
+		dateValue(page, taskProperty.start) !== expectedDates.start ||
 		dateValue(page, taskProperty.due) !== (expectedDates.due ?? "") ||
 		Option.getOrElse(richTextProperty(page, taskProperty.occurrenceKey), () => "") !==
 			`regular:${template.page.id}:${occurrenceDate}` ||
-		!sameIds(relationPropertyIds(page, taskProperty.repeatOf), [rootTaskId]) ||
 		!page.is_locked
 	);
 }

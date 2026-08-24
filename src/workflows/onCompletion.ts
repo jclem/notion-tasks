@@ -14,10 +14,8 @@ import { readTaskConfig } from "../lib/taskConfig.js";
 import {
 	newTaskProperties,
 	parseTaskTemplate,
-	relationValue,
 	repeatMode,
 	taskProperty,
-	templateProperty,
 } from "../lib/taskTemplate.js";
 import { workflowLayer } from "../lib/workflowLayer.js";
 
@@ -58,16 +56,10 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 			"Determine completion time",
 			DateTime.now.pipe(Effect.map(DateTime.formatIso)),
 		));
-	const rootTaskId = relationPropertyIds(page, taskProperty.repeatOf).pipe(
-		Option.flatMap((ids) => Option.fromNullishOr(ids[0])),
-		Option.getOrElse(() => page.id),
-	);
-
 	yield* notion.pages.update({
 		page_id: page.id,
 		properties: {
 			[taskProperty.completedAt]: { date: { start: completedAt } },
-			[taskProperty.repeatOf]: relationValue([rootTaskId]),
 		},
 	});
 
@@ -86,13 +78,6 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 		parsed.template.mode !== repeatMode.afterCompletion
 	) {
 		return;
-	}
-
-	if (Option.getOrUndefined(parsed.template.rootTaskId) !== rootTaskId) {
-		yield* notion.pages.update({
-			page_id: templatePage.id,
-			properties: { [templateProperty.rootTask]: relationValue([rootTaskId]) },
-		});
 	}
 
 	const occurrenceDate = occurrenceDateFromCompletion(
@@ -121,12 +106,7 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 	const templateMarkdown = yield* notion.pages.retrieveMarkdown({ page_id: templatePage.id });
 	yield* notion.pages.create({
 		parent: { data_source_id: config.tasksDataSourceId },
-		properties: newTaskProperties(
-			parsed.template,
-			rootTaskId,
-			occurrenceDate.value,
-			occurrenceKey,
-		),
+		properties: newTaskProperties(parsed.template, occurrenceDate.value, occurrenceKey),
 		markdown: templateMarkdown,
 	});
 });

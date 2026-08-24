@@ -15,11 +15,9 @@ The system uses three Notion data sources:
   be used instead.
 
 ```text
-Task Template ──Template relation──▶ Task instance
-      │                                  │
-      ├──Root Task───────────────────────┤
-      │                                  └──Repeat Of──▶ first task in the series
-      └──Context────────────────────────────Context◀──Context── Task instance
+Task instance ──Template──▶ Task Template
+      │                           │
+      └──Context──▶ Context ◀──Context
 ```
 
 The ownership rules are:
@@ -28,9 +26,8 @@ The ownership rules are:
   repeat mode, and schedule.
 - A task owns instance state: status, scheduled dates, and completion time. Regular
   reconciliation may reschedule future instances, but completed history is preserved.
-- `Repeat Of` always identifies the first task in the series. The root task relates
-  to itself, so every instance follows the same invariant.
-- A repeating task always has a template. One-off tasks have no template.
+- The `Template` relation is the permanent identity of a repeating series. A repeating
+  task always has a template; one-off tasks have no template.
 - Editing a template updates its owned fields on every related task, including
   completed instances, without overwriting instance state.
 
@@ -52,7 +49,6 @@ contract.
 | `Context`        | Relation → Contexts       | Copied from the template for repeating tasks.                                                                            |
 | `Template`       | Relation → Task Templates | Empty for one-off tasks; set on every repeating instance. Configure a reciprocal `Instances` property on Task Templates. |
 | `Repeat`         | Rollup                    | Roll up `Template` → `Schedule Description` with “Show original” for a friendly recurrence label.                        |
-| `Repeat Of`      | Relation → Tasks          | Points to the root task, including from the root task itself.                                                            |
 | `Occurrence Key` | Text                      | Hidden, Worker-managed deduplication key.                                                                                |
 
 Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
@@ -70,7 +66,6 @@ Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
 | `Due Offset Days`      | Number                         | Optional non-negative whole calendar-day offset after Start. Empty means the task has no Due date.         |
 | `Notes`                | Text                           | Copied to every instance. Useful for details such as an amount or payment method.                          |
 | `Context`              | Relation → Contexts            | Copied to all instances.                                                                                   |
-| `Root Task`            | Relation → Tasks               | Worker-managed single relation to the first series instance.                                               |
 | `Instances`            | Reciprocal relation from Tasks | All tasks whose `Template` points here. Useful in the UI; the Worker queries from the Tasks side.          |
 | `RRULE`                | Text                           | Hidden, Worker-managed normalized RRULE.                                                                   |
 | `Schedule Description` | Text                           | Worker-managed canonical display, such as `Every February on the 1st Saturday`.                            |
@@ -141,11 +136,12 @@ the page belongs to `TASK_TEMPLATES_DATA_SOURCE_ID`.
 
 1. Compile `Schedule` and update `RRULE`, `Schedule Description`, and
    `Schedule Error` only when their values changed.
-2. Find or create the root task and make its `Repeat Of` relation self-referential.
-3. Copy `Title`, `Notes`, `Context`, and `Template` to every instance, including
+2. Copy `Title`, `Notes`, `Context`, and `Template` to every instance, including
    completed history. `Status`, `Due`, and `Completed At` are not overwritten by
    ordinary template synchronization.
-4. Copy the template page body into newly created root and recurrence tasks.
+3. For `After completion`, create one initial task from `Starts` only when the
+   enabled template has no instances.
+4. Copy the template page body into newly created tasks.
    Page content is copy-on-create: later template edits do not overwrite task
    checklists or other instance-specific content. The Worker fails visibly instead
    of silently copying a truncated body or omitting unsupported blocks.
@@ -165,8 +161,7 @@ template.
 
 For an enabled `After completion` template, it calculates the first RRULE occurrence
 after the Eastern completion date and creates exactly one new, unlocked task with a
-copy of the template page body. The new task points to the original root through
-`Repeat Of`; a chain never changes roots.
+copy of the template page body and the same `Template` relation.
 
 The occurrence key is derived from the completed task ID. Before creating a task, the
 Worker queries for that key, so retries and duplicate page events converge on the same
@@ -196,7 +191,8 @@ The system uses several additional duplicate guards:
 - Every logical task instance has a deterministic `Occurrence Key`.
 - Completion-driven creation queries for that key before creating a successor.
 - Regular reconciliation reuses exact scheduled-date matches and removes surplus pages.
-- Root tasks use a stable root key; duplicate roots are detected and trashed.
+- Initial after-completion tasks use a stable key; duplicate initial tasks are detected
+  and trashed on the next template reconciliation.
 - API failures propagate so the Worker run remains visibly failed and retryable.
 
 ## Suggested Things-like views
@@ -209,8 +205,8 @@ The system uses several additional duplicate guards:
 - `Repeating`: Task Templates where `Enabled` is checked, showing
   `Schedule Description` and `Schedule Error`.
 
-Hide `Completed At`, `Template`, `Repeat Of`, and `Occurrence Key` from normal task
-views. They are system metadata rather than part of the capture interface.
+Hide `Completed At`, `Template`, and `Occurrence Key` from normal task views. They
+are system metadata rather than part of the capture interface.
 
 ## Workflows
 

@@ -101,7 +101,6 @@ function templatePage(dueOffsetDays: number | null) {
 			},
 			Notes: { id: "notes", type: "rich_text", rich_text: [] },
 			Context: { id: "context", type: "relation", relation: [] },
-			"Root Task": { id: "root", type: "relation", relation: [] },
 		},
 	} as unknown as PageObjectResponse;
 }
