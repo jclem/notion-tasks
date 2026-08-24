@@ -60,5 +60,11 @@ run = "./node_modules/.bin/oxfmt --check ."
 [tasks.check]
 depends = ["check:*"]
 
+[tasks.test]
+run = "npm test"
+
+[tasks.build]
+run = "npm run build"
+
 [tasks.deploy]
 run = "ntn workers deploy"
