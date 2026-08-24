@@ -1,9 +1,9 @@
 # Notion Tasks
 
-Notion Tasks is a task system meant to replace Things. It keeps repeating task
-rules in a separate Task Templates data source. You can write schedules in plain
-language, such as `Weekdays` or `1st Saturday of February`. You do not need to
-see or write raw RRULEs in your normal task views.
+Notion Tasks is a task system built around templates. It keeps repeating task rules
+in a separate Task Templates data source. You can write schedules in plain language,
+such as `Weekdays` or `1st Saturday of February`. You do not need to see or write raw
+RRULEs in your normal task views.
 
 ## How it works
 
@@ -207,7 +207,7 @@ safe.
   extra first tasks to trash.
 - API errors are not hidden. The run stays failed so you can see it and retry it.
 
-## Suggested Things-like views
+## Suggested views
 
 - `Inbox`: `Status` is `Inbox`.
 - `Today`: not done, and `Due` is today or earlier.
