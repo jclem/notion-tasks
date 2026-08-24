@@ -1,227 +1,39 @@
 # Notion Tasks
 
-A template-driven task system designed to replace Things. Repeating tasks are
-configured in a separate Task Templates data source using friendly schedules such
-as `Weekdays` and `1st Saturday of February`; normal task views never expose raw
-RRULEs.
+Notion Tasks is a task system built around templates. It keeps repeating task rules
+in a separate Task Templates data source. You can write schedules in plain language,
+such as `Weekdays` or `1st Saturday of February`. You do not need to see or write raw
+RRULEs in your normal task views.
 
-## How the system works
+## How it works
 
-The system uses three Notion data sources:
+The system uses two main Notion data sources:
 
-- `Tasks` contains actionable and historical task instances.
-- `Task Templates` is the source of truth for every repeating series.
-- `Contexts` is a shared lookup data source. An existing contexts data source can
-  be used instead.
+- `Tasks` holds the tasks you work on and the tasks you have finished.
+- `Task Templates` holds the rules for every repeating task.
+
+A task made from a template is called an **instance**.
 
 ```text
 Task instance ──Template──▶ Task Template
-      │                           │
-      └──Context──▶ Context ◀──Context
 ```
 
-The ownership rules are:
+The rules are simple:
 
-- A template owns series configuration and copied defaults: title, notes, context,
-  repeat mode, and schedule.
-- A task owns instance state: status, scheduled dates, and completion time. Regular
-  reconciliation may reschedule future instances, but completed history is preserved.
-- The `Template` relation is the permanent identity of a repeating series. A repeating
-  task always has a template; one-off tasks have no template.
-- Editing a template updates its owned fields on every related task, including
-  completed instances, without overwriting instance state.
+- A template controls the task title, notes, context, repeat mode, and schedule.
+- A task controls its own status, dates, and completion time.
+- A repeating task always points to its template through the `Template` relation.
+  A one-time task does not have a template.
+- When you edit a template, the Worker copies the template-owned fields to all
+  tasks linked to it, including finished tasks.
+- The Worker may change dates on future regular tasks when it checks the schedule.
+  It does not change dates in finished history.
 
-## Notion schemas
+## Setup
 
-Property and option names are case-sensitive because the Worker uses them as its API
-contract.
+### Install
 
-### Tasks
-
-| Property         | Notion type               | Ownership and behavior                                                                                                   |
-| ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `Title`          | Title                     | Required. Copied from the template for repeating tasks; freely editable for one-off tasks.                               |
-| `Status`         | Status                    | Required. Must include `Not started` and `Done`. `Done` triggers completion handling.                                    |
-| `Start`          | Date                      | Optional for one-off tasks. Holds the recurrence date for every generated instance.                                      |
-| `Due`            | Date                      | Optional for one-off tasks. Set from the recurrence date or a calendar-day offset when configured by the template.       |
-| `Completed At`   | Date                      | Worker-managed completion timestamp.                                                                                     |
-| `Notes`          | Text                      | Copied from the template for repeating tasks; freely editable for one-off tasks.                                         |
-| `Context`        | Relation → Contexts       | Copied from the template for repeating tasks.                                                                            |
-| `Template`       | Relation → Task Templates | Empty for one-off tasks; set on every repeating instance. Configure a reciprocal `Instances` property on Task Templates. |
-| `Repeat`         | Rollup                    | Roll up `Template` → `Schedule Description` with “Show original” for a friendly recurrence label.                        |
-| `Occurrence Key` | Text                      | Hidden, Worker-managed deduplication key.                                                                                |
-
-Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
-`Canceled`. Only `Not started` and `Done` are interpreted by the current Worker.
-
-### Task Templates
-
-| Property               | Notion type                    | Ownership and behavior                                                                                     |
-| ---------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `Name`                 | Title                          | The title copied to every instance. The title property may be renamed because the Worker finds it by type. |
-| `Enabled`              | Checkbox                       | Disabled templates do not create or reconcile instances. Existing tasks remain.                            |
-| `Repeat Mode`          | Select                         | Exactly `Regularly` or `After completion`.                                                                 |
-| `Schedule`             | Text                           | User-edited friendly schedule. This is the normal recurrence UI.                                           |
-| `Starts`               | Date                           | Required date-only first occurrence and DTSTART anchor for regular recurrence.                             |
-| `Due Offset Days`      | Number                         | Optional non-negative whole calendar-day offset after Start. Empty means the task has no Due date.         |
-| `Notes`                | Text                           | Copied to every instance. Useful for details such as an amount or payment method.                          |
-| `Context`              | Relation → Contexts            | Copied to all instances.                                                                                   |
-| `Instances`            | Reciprocal relation from Tasks | All tasks whose `Template` points here. Useful in the UI; the Worker queries from the Tasks side.          |
-| `RRULE`                | Text                           | Hidden, Worker-managed normalized RRULE.                                                                   |
-| `Schedule Description` | Text                           | Worker-managed canonical display, such as `Every February on the 1st Saturday`.                            |
-| `Schedule Error`       | Text                           | Worker-managed validation feedback. Empty for a valid template.                                            |
-
-To make another template property propagate, add it to both data sources and to
-`synchronizedTaskProperties` in `src/lib/taskTemplate.ts`.
-
-### Start and due dates
-
-Every generated task has its recurrence date in `Start`. `Due Offset Days`
-determines whether it also has a deadline:
-
-- Leave it empty for no due date.
-- Use `0` for a due date on the same day as Start.
-- Use a positive whole number for a later due date.
-
-Offsets use calendar days. For example, a September 20 occurrence scheduled on
-Start with `Due Offset Days = 14` has Start `2026-09-20` and Due `2026-10-04`.
-Regular reconciliation migrates future due-only instances to the Start-based model
-without creating a second series. Completed history is not rewritten. For `After
-completion`, the next occurrence date is calculated from completion first, then
-placed in Start and, when configured, Due using these settings.
-
-### Contexts
-
-Only `Name` is required by the Worker. `Active` is an optional organizational field:
-
-| Property | Notion type | Behavior                                                              |
-| -------- | ----------- | --------------------------------------------------------------------- |
-| `Name`   | Title       | Context name.                                                         |
-| `Active` | Checkbox    | Optional. Allows retired contexts to be hidden without deleting them. |
-
-The Tasks and Task Templates relations may be reciprocal for navigation. The Worker
-copies every related context ID, although the UI can enforce a single context by
-convention.
-
-## Friendly schedules
-
-`Schedule` supports a predictable subset of English rather than open-ended natural
-language.
-
-| Schedule                            | Compiled RRULE                       |
-| ----------------------------------- | ------------------------------------ |
-| `Daily`                             | `FREQ=DAILY`                         |
-| `Weekdays`                          | `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR`   |
-| `Every Monday`                      | `FREQ=WEEKLY;BYDAY=MO`               |
-| `Every week on Monday and Thursday` | `FREQ=WEEKLY;BYDAY=MO,TH`            |
-| `Every 2 weeks`                     | `INTERVAL=2;FREQ=WEEKLY`             |
-| `Monthly`                           | `FREQ=MONTHLY`                       |
-| `Every month on the 20th`           | `FREQ=MONTHLY;BYMONTHDAY=20`         |
-| `Last Friday of every month`        | `FREQ=MONTHLY;BYDAY=-1FR`            |
-| `February 6`                        | `FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=6` |
-| `1st Saturday of February`          | `FREQ=YEARLY;BYMONTH=2;BYDAY=+1SA`   |
-
-Raw `FREQ=...` input remains available as an escape hatch. Normal views should hide
-`RRULE` and display `Schedule Description` and `Schedule Error` instead.
-
-All recurrence calculations use `America/New_York`. Generated tasks have date-only
-Start and Due values.
-
-## Recurrence behavior
-
-### Template creation or update
-
-The `onUpdate` workflow handles page-created and page-updated events but exits unless
-the page belongs to `TASK_TEMPLATES_DATA_SOURCE_ID`.
-
-1. Compile `Schedule` and update `RRULE`, `Schedule Description`, and
-   `Schedule Error` only when their values changed.
-2. Copy `Title`, `Notes`, `Context`, and `Template` to every instance, including
-   completed history. `Status`, `Due`, and `Completed At` are not overwritten by
-   ordinary template synchronization.
-3. For `After completion`, create one initial task from `Starts` only when the
-   enabled template has no instances.
-4. Copy the template page body into newly created tasks.
-   Page content is copy-on-create: later template edits do not overwrite task
-   checklists or other instance-specific content. The Worker fails visibly instead
-   of silently copying a truncated body or omitting unsupported blocks.
-5. For `Regularly`, place each occurrence in `Start`, add `Due` when configured,
-   calculate any Due offset, and reconcile dates on or after the current Eastern day through
-   six calendar months ahead. Exact matches are reused, surplus pages are trashed,
-   existing pages are rescheduled where possible, and missing dates are created.
-
-Generated regular occurrences are locked in the Notion UI. The Worker can still
-update them when their template changes.
-
-### Repeat after completion
-
-The `onCompletion` workflow reacts only when a task is `Done` and has no
-`Completed At` value. It records the event timestamp and loads the task's current
-template.
-
-For an enabled `After completion` template, it calculates the first RRULE occurrence
-after the Eastern completion date and creates exactly one new, unlocked task with a
-copy of the template page body and the same `Template` relation.
-
-The occurrence key is derived from the completed task ID. Before creating a task, the
-Worker queries for that key, so retries and duplicate page events converge on the same
-logical next task. Changing a template affects the next task created but does not
-rewrite historical dates that depended on earlier completion times.
-
-### Repeat regularly
-
-The `nightlyReconcile` workflow uses a scheduled trigger. Configure the deployed
-trigger to run daily at midnight in `America/New_York`. It queries every enabled
-`Regularly` template and performs the same six-month reconciliation used after a
-template edit.
-
-Each regular occurrence key is derived from the template ID and occurrence date. Notion page
-creation does not expose a native idempotency key, so the reconciler also treats
-duplicate pages as surplus and repairs them on the next template edit or nightly
-sweep.
-
-## Durable execution and retry safety
-
-All Notion reads, writes, time generation, and environment reads run inside awaited
-Worker steps. Step keys include a hash of the Notion operation and arguments, which
-makes repeated work stable across workflow replay.
-
-The system uses several additional duplicate guards:
-
-- Every logical task instance has a deterministic `Occurrence Key`.
-- Completion-driven creation queries for that key before creating a successor.
-- Regular reconciliation reuses exact scheduled-date matches and removes surplus pages.
-- Initial after-completion tasks use a stable key; duplicate initial tasks are detected
-  and trashed on the next template reconciliation.
-- API failures propagate so the Worker run remains visibly failed and retryable.
-
-## Suggested Things-like views
-
-- `Inbox`: `Status` is `Inbox`.
-- `Today`: not done, and `Due` is today or earlier.
-- `Upcoming`: not done, sorted by `Due` ascending.
-- `Anytime`: not done and `Due` is empty.
-- `Logbook`: `Status` is `Done`, sorted by `Completed At` descending.
-- `Repeating`: Task Templates where `Enabled` is checked, showing
-  `Schedule Description` and `Schedule Error`.
-
-Hide `Completed At`, `Template`, and `Occurrence Key` from normal task views. They
-are system metadata rather than part of the capture interface.
-
-## Workflows
-
-| Key                | Trigger                        | Outcome                                                       |
-| ------------------ | ------------------------------ | ------------------------------------------------------------- |
-| `onUpdate`         | Notion page created or updated | Compiles and reconciles Task Templates.                       |
-| `onCompletion`     | Notion page updated            | Records completion and creates an after-completion successor. |
-| `nightlyReconcile` | Scheduled recurrence           | Maintains six months of regular occurrences.                  |
-
-Workflow files live directly under `src/workflows/`; each filename is its deployed
-workflow key.
-
-## Local setup
-
-Node 22 or newer and npm 10.9.2 or newer are required. Install
+You need Node 22 or newer and npm 10.9.2 or newer. Install
 [mise](https://mise.jdx.dev/), then run:
 
 ```sh
@@ -236,16 +48,16 @@ TASKS_DATA_SOURCE_ID=...
 TASK_TEMPLATES_DATA_SOURCE_ID=...
 ```
 
-Add `NOTION_API_TOKEN` locally when the Worker runtime does not already provide its
-Notion client credentials. Never commit `.env` or hard-code credentials.
+Add `NOTION_API_TOKEN` when your local Worker does not already have Notion login
+details. Never commit `.env`, and never put a login token directly in the code.
 
-The Tasks, Task Templates, and Contexts data sources must all be shared with the
-Notion connection. Relations can appear empty to the API when the related data source
-has not been shared.
+Share the Tasks, Task Templates, and Contexts data sources with the Notion
+connection. If a related data source is not shared, its relations may look empty
+to the API.
 
-## Verification and deployment
+### Check and deploy
 
-Run:
+Run all checks:
 
 ```sh
 npm test
@@ -253,15 +65,212 @@ npm run check
 npm run build
 ```
 
-Then deploy and push the environment:
+Then deploy the Worker and send it the `.env` settings:
 
 ```sh
 ntn workers deploy
 ntn workers env push
 ```
 
-Finally, configure `nightlyReconcile` to run every day at midnight in
-`America/New_York`.
+Set `nightlyReconcile` to run every day at midnight in `America/New_York`.
 
-Configure `onUpdate` property triggers for `Name`, `Enabled`, `Repeat Mode`,
+Set the `onUpdate` property trigger to watch `Name`, `Enabled`, `Repeat Mode`,
 `Schedule`, `Starts`, `Due Offset Days`, `Notes`, and `Context`.
+
+## Notion schemas
+
+Property names and option names are case-sensitive. The Worker looks for these
+exact names.
+
+### Tasks
+
+| Property         | Notion type               | What it does                                                                                                    |
+| ---------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Title`          | Title                     | Required. Copied from the template for repeating tasks. You can edit it freely on one-time tasks.               |
+| `Status`         | Status                    | Required. Must include `Not started` and `Done`. Setting a task to `Done` starts the completion workflow.       |
+| `Start`          | Date                      | Optional on one-time tasks. Every generated repeating task stores its occurrence date here.                     |
+| `Due`            | Date                      | Optional. A template can set it to the Start date or a number of days after Start.                              |
+| `Completed At`   | Date                      | Set by the Worker when a task is completed.                                                                     |
+| `Notes`          | Text                      | Copied from the template for repeating tasks. You can edit it freely on one-time tasks.                         |
+| `Context`        | Relation → Contexts       | Copied from the template for repeating tasks.                                                                   |
+| `Template`       | Relation → Task Templates | Empty on one-time tasks. Every repeating task points to its template. Link it to `Instances` on Task Templates. |
+| `Repeat`         | Rollup                    | Shows `Template` → `Schedule Description` with “Show original” so people can read the repeat rule.              |
+| `Occurrence Key` | Text                      | Hidden value set by the Worker to prevent duplicate tasks.                                                      |
+
+Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
+`Canceled`. The Worker only gives special meaning to `Not started` and `Done`.
+
+### Task Templates
+
+| Property               | Notion type                | What it does                                                                                    |
+| ---------------------- | -------------------------- | ----------------------------------------------------------------------------------------------- |
+| `Name`                 | Title                      | Copied to every task title. You may rename this property because the Worker finds it by type.   |
+| `Enabled`              | Checkbox                   | When unchecked, the template does not create or update tasks. Existing tasks stay in place.     |
+| `Repeat Mode`          | Select                     | Must be exactly `Regularly` or `After completion`.                                              |
+| `Schedule`             | Text                       | The plain-language repeat rule you edit.                                                        |
+| `Starts`               | Date                       | Required. The first occurrence and the starting date used by the RRULE. Do not include a time.  |
+| `Due Offset Days`      | Number                     | Optional. A whole number of days from Start to Due. Leave it empty for no Due date.             |
+| `Notes`                | Text                       | Copied to every task. You can use it for details such as an amount or payment method.           |
+| `Context`              | Relation → Contexts        | Copied to every task.                                                                           |
+| `Instances`            | Linked relation from Tasks | Shows all tasks that point to this template. The Worker reads the relation from the Tasks side. |
+| `RRULE`                | Text                       | Hidden repeat rule created by the Worker.                                                       |
+| `Schedule Description` | Text                       | Standard description created by the Worker, such as `Every February on the 1st Saturday`.       |
+| `Schedule Error`       | Text                       | Explains a bad schedule. It is empty when the template is valid.                                |
+
+If you want another template field copied to tasks, add that field to both data
+sources. Then add it to `synchronizedTaskProperties` in
+`src/lib/taskTemplate.ts`.
+
+### Start and Due dates
+
+Every generated task puts its occurrence date in `Start`. `Due Offset Days`
+controls its deadline:
+
+- Leave it empty for no Due date.
+- Use `0` when Start and Due should be the same day.
+- Use a positive whole number when Due should be later.
+
+The offset uses calendar days. For example, a task with Start `2026-09-20` and
+`Due Offset Days = 14` gets Due `2026-10-04`.
+
+The Worker moves future tasks that only have Due dates to this Start-based setup.
+It does not make a second series, and it does not rewrite finished history.
+
+For `After completion`, the Worker first finds the next occurrence date from the
+completion date. It puts that date in Start. It also sets Due when the template has
+a Due offset.
+
+### Contexts
+
+The Worker only needs a `Name` property. `Active` is optional.
+
+| Property | Notion type | What it does                                                |
+| -------- | ----------- | ----------------------------------------------------------- |
+| `Name`   | Title       | The context name.                                           |
+| `Active` | Checkbox    | Optional. Lets you hide an old context without deleting it. |
+
+The Tasks and Task Templates relations can link back to Contexts to make browsing
+easier. The Worker copies every linked context. You can choose to use only one
+context per task in the Notion interface.
+
+## Friendly schedules
+
+`Schedule` accepts a small, clear set of English phrases. It does not try to
+understand every possible sentence.
+
+| Schedule                            | RRULE made by the Worker             |
+| ----------------------------------- | ------------------------------------ |
+| `Daily`                             | `FREQ=DAILY`                         |
+| `Weekdays`                          | `FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR`   |
+| `Every Monday`                      | `FREQ=WEEKLY;BYDAY=MO`               |
+| `Every week on Monday and Thursday` | `FREQ=WEEKLY;BYDAY=MO,TH`            |
+| `Every 2 weeks`                     | `INTERVAL=2;FREQ=WEEKLY`             |
+| `Monthly`                           | `FREQ=MONTHLY`                       |
+| `Every month on the 20th`           | `FREQ=MONTHLY;BYMONTHDAY=20`         |
+| `Last Friday of every month`        | `FREQ=MONTHLY;BYDAY=-1FR`            |
+| `February 6`                        | `FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=6` |
+| `1st Saturday of February`          | `FREQ=YEARLY;BYMONTH=2;BYDAY=+1SA`   |
+
+Advanced users may enter a raw rule that starts with `FREQ=`. Normal Notion views
+should hide `RRULE`. Show `Schedule Description` and `Schedule Error` instead.
+
+All repeat dates use the `America/New_York` time zone. Generated Start and Due
+values are dates without times.
+
+## What happens when tasks repeat
+
+### When a template is created or changed
+
+The `onUpdate` workflow runs when a Notion page is created or changed. It stops
+unless that page belongs to `TASK_TEMPLATES_DATA_SOURCE_ID`.
+
+For a valid template, the Worker does this:
+
+1. It turns `Schedule` into an `RRULE` and fills in `Schedule Description`. If
+   the schedule is wrong, it writes the problem in `Schedule Error`.
+2. It copies `Title`, `Notes`, `Context`, and `Template` to every linked task,
+   including finished tasks. This normal update does not overwrite `Status`,
+   `Due`, or `Completed At`.
+3. For `After completion`, it creates one first task from `Starts` when the
+   enabled template has no tasks yet.
+4. It copies the template page body into each new task. It only copies the body
+   when it creates the task. Later template edits do not replace checklists or
+   other page content inside existing tasks. If Notion cannot return the complete
+   template body, the run fails and shows an error.
+5. For `Regularly`, it checks all dates from today through six months from today.
+   It includes today. It reuses tasks on the right dates, moves future tasks when
+   needed, sends extra tasks to trash, and creates missing tasks.
+
+Generated `Regularly` tasks are locked in Notion. The Worker can still update them
+when their template changes.
+
+### Repeat after completion
+
+The `onCompletion` workflow runs when a task changes. It only acts when the task
+has `Status = Done` and `Completed At` is empty. It saves the completion time and
+loads the task's template.
+
+If the template is enabled and uses `After completion`, the Worker finds the first
+RRULE date after the completion date. It creates exactly one new, unlocked task.
+The new task gets the template body and points to the same template.
+
+The new task's `Occurrence Key` comes from the completed task's ID. Before the
+Worker creates the new task, it looks for that key. This keeps a retry or a second
+Notion event from making another copy.
+
+Changing the template affects tasks made later. It does not change old dates that
+were based on an earlier completion time.
+
+### Repeat regularly
+
+The `nightlyReconcile` workflow runs on a schedule. Set it to run every day at
+midnight in `America/New_York`.
+
+It checks every enabled `Regularly` template. It then checks and fixes the next six
+months of tasks in the same way as a template edit.
+
+Each regular task gets an `Occurrence Key` made from its template ID and date.
+Notion does not let page creation use a built-in duplicate-prevention key. If two
+copies are ever created, the next template update or nightly run treats one as
+extra and sends it to trash.
+
+## Safe retries
+
+Notion Workers can retry a run after an error. The code is built to make retries
+safe.
+
+- All Notion reads and writes happen inside saved Worker steps.
+- Reading the current time and reading environment settings also happen inside
+  saved steps.
+- Step keys include the Notion action and its arguments, so a replay can match the
+  same saved work.
+- Every repeating task has a predictable `Occurrence Key`.
+- The completion workflow checks for an existing key before making the next task.
+- Regular schedule checks reuse tasks on the correct dates and remove extras.
+- First `After completion` tasks use a stable key. A later template check sends
+  extra first tasks to trash.
+- API errors are not hidden. The run stays failed so you can see it and retry it.
+
+## Suggested views
+
+- `Inbox`: `Status` is `Inbox`.
+- `Today`: not done, and `Due` is today or earlier.
+- `Upcoming`: not done, sorted by `Due` from earliest to latest.
+- `Anytime`: not done, and `Due` is empty.
+- `Logbook`: `Status` is `Done`, sorted by newest `Completed At` first.
+- `Repeating`: Task Templates where `Enabled` is checked. Show
+  `Schedule Description` and `Schedule Error`.
+
+Hide `Completed At`, `Template`, and `Occurrence Key` from normal task views.
+They are system fields, not fields you need for everyday task entry.
+
+## Workflows
+
+| Key                | Trigger                        | What it does                                               |
+| ------------------ | ------------------------------ | ---------------------------------------------------------- |
+| `onUpdate`         | Notion page created or changed | Reads and checks Task Templates, then updates their tasks. |
+| `onCompletion`     | Notion page changed            | Saves completion and makes the next after-completion task. |
+| `nightlyReconcile` | Daily schedule                 | Keeps six months of regular tasks ready.                   |
+
+Workflow files are stored directly in `src/workflows/`. Each filename becomes the
+workflow key used after deployment.
