@@ -27,8 +27,8 @@ export function occurrenceDateFromCompletion(
 }
 
 /**
- * Lists calendar-date recurrence occurrences that fall after the current Eastern
- * day and no later than six calendar months after it.
+ * Lists calendar-date recurrence occurrences that fall on or after the current
+ * Eastern day and no later than six calendar months after it.
  *
  * @param recurrenceRule - An RFC 5545 RRULE with a daily-or-longer frequency.
  * @param occurrenceDate - The template's first scheduled date, which supplies DTSTART.
@@ -55,7 +55,7 @@ export function futureOccurrenceDates(
 		);
 		return yield* pipe(
 			occurrences,
-			Array.filter((occurrence) => occurrence.getTime() > DateTime.toEpochMillis(cutoff)),
+			Array.filter((occurrence) => occurrence.getTime() >= DateTime.toEpochMillis(cutoff)),
 			Array.map(DateTime.make),
 			Option.all,
 			Option.map(Array.map(DateTime.formatIsoDateUtc)),

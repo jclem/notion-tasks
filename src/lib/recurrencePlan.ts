@@ -25,7 +25,7 @@ export type RecurrencePlan = {
  *
  * @param occurrences - Existing occurrences related to the source task.
  * @param occurrenceDates - Desired future dates in recurrence order.
- * @param cutoff - The current Eastern calendar date, which existing occurrences must follow.
+ * @param cutoff - The current Eastern calendar date, which existing occurrences must not precede.
  * @param primaryDateProperty - Task property that normally stores the scheduled date.
  * @param fallbackDateProperty - Previous date property used while migrating a template.
  * @returns An immutable reconciliation plan.
@@ -116,7 +116,7 @@ function occurrenceScheduleDate(
 		Array.findFirst((name) =>
 			datePropertyStart(page, name).pipe(
 				Option.map((start) => start.slice(0, 10)),
-				Option.exists((date) => date > cutoff),
+				Option.exists((date) => date >= cutoff),
 			),
 		),
 		Option.flatMap((name) => datePropertyStart(page, name)),

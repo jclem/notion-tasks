@@ -1,8 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PageObjectResponse } from "@notionhq/client";
+import { Option } from "effect";
+import { futureOccurrenceDates } from "../src/lib/dateUtils.js";
 import { recurrencePlan } from "../src/lib/recurrencePlan.js";
 import { parseTaskTemplate, scheduledTaskDates } from "../src/lib/taskTemplate.js";
+
+describe("futureOccurrenceDates", () => {
+	it("includes a first occurrence on the current Eastern day", () => {
+		const dates = futureOccurrenceDates(
+			"FREQ=YEARLY;BYMONTH=8;BYMONTHDAY=24",
+			"2026-08-24",
+			"2026-08-24T14:03:00.000Z",
+		);
+
+		assert(Option.isSome(dates));
+		assert.deepEqual(dates.value, ["2026-08-24"]);
+	});
+});
 
 describe("scheduledTaskDates", () => {
 	it("supports a Start date without a Due date", () => {
@@ -66,6 +81,16 @@ describe("parseTaskTemplate date placement", () => {
 });
 
 describe("recurrencePlan date placement", () => {
+	it("reuses an occurrence on the current Eastern day", () => {
+		const existing = taskPage("task-1", "2026-08-24", null);
+		const plan = recurrencePlan([existing], ["2026-08-24"], "2026-08-24", "Start", "Due");
+
+		assert.deepEqual(plan.synchronize, [
+			{ occurrence: existing, occurrenceDate: "2026-08-24" },
+		]);
+		assert.deepEqual(plan.create, []);
+	});
+
 	it("reuses a future Due occurrence when migrating a template to Start", () => {
 		const existing = taskPage("task-1", null, "2026-09-20");
 		const plan = recurrencePlan([existing], ["2026-09-20"], "2026-08-23", "Start", "Due");

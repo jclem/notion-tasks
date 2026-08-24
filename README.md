@@ -146,8 +146,8 @@ the page belongs to `TASK_TEMPLATES_DATA_SOURCE_ID`.
    checklists or other instance-specific content. The Worker fails visibly instead
    of silently copying a truncated body or omitting unsupported blocks.
 5. For `Regularly`, place each occurrence in `Start`, add `Due` when configured,
-   calculate any Due offset, and reconcile dates after the current Eastern day through six
-   calendar months ahead. Exact matches are reused, surplus pages are trashed,
+   calculate any Due offset, and reconcile dates on or after the current Eastern day through
+   six calendar months ahead. Exact matches are reused, surplus pages are trashed,
    existing pages are rescheduled where possible, and missing dates are created.
 
 Generated regular occurrences are locked in the Notion UI. The Worker can still
