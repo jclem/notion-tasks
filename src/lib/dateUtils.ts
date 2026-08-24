@@ -6,15 +6,15 @@ const require = createRequire(import.meta.url);
 const { RRule } = require("rrule") as typeof import("rrule");
 
 /**
- * Calculates the next date-only due date from an iCalendar recurrence rule,
+ * Calculates the next date-only occurrence from an iCalendar recurrence rule,
  * using the Eastern calendar date that contains the completion timestamp as DTSTART.
  *
  * @param timestamp - The ISO 8601 completion timestamp.
  * @param recurrenceRule - An RFC 5545 RRULE, such as `FREQ=DAILY;INTERVAL=30`.
- * @returns The next ISO 8601 calendar date (`YYYY-MM-DD`) without a time, or
+ * @returns The next ISO 8601 occurrence date (`YYYY-MM-DD`) without a time, or
  * `Option.none()` when the rule is invalid or has no subsequent occurrence.
  */
-export function dueDateFromCompletion(
+export function occurrenceDateFromCompletion(
 	timestamp: string,
 	recurrenceRule: string,
 ): Option.Option<string> {
@@ -31,17 +31,17 @@ export function dueDateFromCompletion(
  * day and no later than six calendar months after it.
  *
  * @param recurrenceRule - An RFC 5545 RRULE with a daily-or-longer frequency.
- * @param dueDate - The source task's Due value, which supplies DTSTART.
+ * @param occurrenceDate - The template's first scheduled date, which supplies DTSTART.
  * @param now - The ISO 8601 timestamp used to establish the Eastern-day cutoff.
  * @returns Future ISO 8601 calendar dates, or `Option.none()` when the inputs are invalid.
  */
-export function futureDueDates(
+export function futureOccurrenceDates(
 	recurrenceRule: string,
-	dueDate: string,
+	occurrenceDate: string,
 	now: string,
 ): Option.Option<string[]> {
 	return Option.gen(function* () {
-		const start = yield* calendarMidnightUtc(dueDate);
+		const start = yield* calendarMidnightUtc(occurrenceDate);
 		const cutoff = yield* easternMidnightUtc(now);
 		const rule = yield* parseRecurrenceRule(recurrenceRule, start).pipe(
 			Option.filter((rule) => HashSet.has(calendarFrequencies, rule.options.freq)),
@@ -61,6 +61,15 @@ export function futureDueDates(
 			Option.map(Array.map(DateTime.formatIsoDateUtc)),
 		);
 	});
+}
+
+/** Adds a non-negative number of calendar days to a date-only value. */
+export function calendarDateAfterDays(value: string, days: number): Option.Option<string> {
+	return DateTime.make(value).pipe(
+		Option.filter((date) => DateTime.formatIsoDateUtc(date) === value),
+		Option.map((date) => DateTime.add(date, { days })),
+		Option.map(DateTime.formatIsoDateUtc),
+	);
 }
 
 /**

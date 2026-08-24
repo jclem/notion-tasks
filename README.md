@@ -26,7 +26,8 @@ The ownership rules are:
 
 - A template owns series configuration and copied defaults: title, notes, context,
   repeat mode, and schedule.
-- A task owns instance state: status, due date, and completion time.
+- A task owns instance state: status, scheduled dates, and completion time. Regular
+  reconciliation may reschedule future instances, but completed history is preserved.
 - `Repeat Of` always identifies the first task in the series. The root task relates
   to itself, so every instance follows the same invariant.
 - A repeating task always has a template. One-off tasks have no template.
@@ -44,6 +45,7 @@ contract.
 | ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `Title`          | Title                     | Required. Copied from the template for repeating tasks; freely editable for one-off tasks.                               |
 | `Status`         | Status                    | Required. Must include `Not started` and `Done`. `Done` triggers completion handling.                                    |
+| `Start`          | Date                      | Optional for one-off tasks. Holds the recurrence date when a template schedules on Start.                                |
 | `Due`            | Date                      | Optional for one-off tasks. Date-only for generated instances.                                                           |
 | `Completed At`   | Date                      | Worker-managed completion timestamp.                                                                                     |
 | `Notes`          | Text                      | Copied from the template for repeating tasks; freely editable for one-off tasks.                                         |
@@ -64,7 +66,9 @@ Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
 | `Enabled`              | Checkbox                       | Disabled templates do not create or reconcile instances. Existing tasks remain.                            |
 | `Repeat Mode`          | Select                         | Exactly `Regularly` or `After completion`.                                                                 |
 | `Schedule`             | Text                           | User-edited friendly schedule. This is the normal recurrence UI.                                           |
-| `Starts`               | Date                           | Initial task due date and the DTSTART anchor for regular recurrence.                                       |
+| `Starts`               | Date                           | Required date-only first occurrence and DTSTART anchor for regular recurrence.                             |
+| `Schedule On`          | Select                         | `Due` or `Start`. Empty defaults to `Due` for existing templates.                                          |
+| `Due Offset Days`      | Number                         | Optional non-negative whole calendar days after Start. Empty means the generated task has no Due date.     |
 | `Notes`                | Text                           | Copied to every instance. Useful for details such as an amount or payment method.                          |
 | `Context`              | Relation → Contexts            | Copied to all instances.                                                                                   |
 | `Root Task`            | Relation → Tasks               | Worker-managed single relation to the first series instance.                                               |
@@ -75,6 +79,23 @@ Suggested status options are `Inbox`, `Not started`, `In progress`, `Done`, and
 
 To make another template property propagate, add it to both data sources and to
 `synchronizedTaskProperties` in `src/lib/taskTemplate.ts`.
+
+### Start and due dates
+
+Each template chooses where its recurrence date is stored:
+
+- `Schedule On = Due`: generated tasks have the occurrence date in `Due` and an
+  empty `Start`. `Due Offset Days` must be empty.
+- `Schedule On = Start`: generated tasks have the occurrence date in `Start`.
+  Leave `Due Offset Days` empty for no due date, use `0` for the same day, or use
+  a positive whole number for a later due date.
+
+Offsets use calendar days. For example, a September 20 occurrence scheduled on
+Start with `Due Offset Days = 14` has Start `2026-09-20` and Due `2026-10-04`.
+Regular reconciliation can migrate future instances between Due and Start without
+creating a second series. Completed history is not rewritten. For `After completion`,
+the next occurrence date is calculated from completion first, then placed in Start
+or Due using these settings.
 
 ### Contexts
 
@@ -111,7 +132,7 @@ Raw `FREQ=...` input remains available as an escape hatch. Normal views should h
 `RRULE` and display `Schedule Description` and `Schedule Error` instead.
 
 All recurrence calculations use `America/New_York`. Generated tasks have date-only
-due dates.
+Start and Due values.
 
 ## Recurrence behavior
 
@@ -130,7 +151,8 @@ the page belongs to `TASK_TEMPLATES_DATA_SOURCE_ID`.
    Page content is copy-on-create: later template edits do not overwrite task
    checklists or other instance-specific content. The Worker fails visibly instead
    of silently copying a truncated body or omitting unsupported blocks.
-5. For `Regularly`, reconcile dates after the current Eastern day through six
+5. For `Regularly`, place each occurrence in `Start` or `Due`, calculate any Due
+   offset, and reconcile dates after the current Eastern day through six
    calendar months ahead. Exact matches are reused, surplus pages are trashed,
    existing pages are rescheduled where possible, and missing dates are created.
 
@@ -160,7 +182,7 @@ trigger to run daily at midnight in `America/New_York`. It queries every enabled
 `Regularly` template and performs the same six-month reconciliation used after a
 template edit.
 
-Each regular occurrence key is derived from the template ID and due date. Notion page
+Each regular occurrence key is derived from the template ID and occurrence date. Notion page
 creation does not expose a native idempotency key, so the reconciler also treats
 duplicate pages as surplus and repairs them on the next template edit or nightly
 sweep.
@@ -175,7 +197,7 @@ The system uses several additional duplicate guards:
 
 - Every logical task instance has a deterministic `Occurrence Key`.
 - Completion-driven creation queries for that key before creating a successor.
-- Regular reconciliation reuses exact due-date matches and removes surplus pages.
+- Regular reconciliation reuses exact scheduled-date matches and removes surplus pages.
 - Root tasks use a stable root key; duplicate roots are detected and trashed.
 - API failures propagate so the Worker run remains visibly failed and retryable.
 
@@ -246,3 +268,6 @@ ntn workers env push
 
 Finally, configure `nightlyReconcile` to run every day at midnight in
 `America/New_York`.
+
+Configure `onUpdate` property triggers for `Name`, `Enabled`, `Repeat Mode`,
+`Schedule`, `Starts`, `Schedule On`, `Due Offset Days`, `Notes`, and `Context`.
