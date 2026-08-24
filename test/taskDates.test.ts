@@ -5,10 +5,10 @@ import { recurrencePlan } from "../src/lib/recurrencePlan.js";
 import { parseTaskTemplate, scheduleOn, scheduledTaskDates } from "../src/lib/taskTemplate.js";
 
 describe("scheduledTaskDates", () => {
-	it("uses the occurrence date as Due by default", () => {
+	it("uses the occurrence date as Start and Due by default", () => {
 		assert.deepEqual(
 			scheduledTaskDates({ scheduleOn: scheduleOn.due, dueOffsetDays: null }, "2026-09-20"),
-			{ start: null, due: "2026-09-20" },
+			{ start: "2026-09-20", due: "2026-09-20" },
 		);
 	});
 

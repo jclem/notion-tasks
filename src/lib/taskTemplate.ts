@@ -193,7 +193,7 @@ export function scheduledTaskDates(
 	occurrenceDate: string,
 ): { readonly start: string | null; readonly due: string | null } {
 	if (template.scheduleOn === scheduleOn.due) {
-		return { start: null, due: occurrenceDate };
+		return { start: occurrenceDate, due: occurrenceDate };
 	}
 
 	const due =
