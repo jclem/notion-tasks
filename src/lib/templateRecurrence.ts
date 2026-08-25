@@ -115,7 +115,6 @@ export const reconcileTemplate = Effect.fn(function* (
 			yield* notion.pages.update({
 				page_id: occurrence.id,
 				properties,
-				is_locked: true,
 			});
 		}
 	}
@@ -124,7 +123,6 @@ export const reconcileTemplate = Effect.fn(function* (
 		yield* notion.pages.update({
 			page_id: occurrence.id,
 			properties: regularOccurrenceUpdateProperties(template, occurrenceDate),
-			is_locked: true,
 		});
 	}
 
@@ -133,12 +131,11 @@ export const reconcileTemplate = Effect.fn(function* (
 	}
 
 	for (const occurrenceDate of plan.create) {
-		const occurrence = yield* notion.pages.create({
+		yield* notion.pages.create({
 			parent: { data_source_id: tasksDataSourceId },
 			properties: regularOccurrenceCreateProperties(template, occurrenceDate),
 			markdown: templateMarkdown,
 		});
-		yield* notion.pages.update({ page_id: occurrence.id, is_locked: true });
 	}
 });
 
@@ -256,8 +253,7 @@ function taskNeedsUpdate(
 		dateValue(page, taskProperty.start) !== expectedDates.start ||
 		dateValue(page, taskProperty.due) !== (expectedDates.due ?? "") ||
 		Option.getOrElse(richTextProperty(page, taskProperty.occurrenceKey), () => "") !==
-			`regular:${template.page.id}:${occurrenceDate}` ||
-		!page.is_locked
+			`regular:${template.page.id}:${occurrenceDate}`
 	);
 }
 

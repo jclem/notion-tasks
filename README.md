@@ -258,8 +258,8 @@ For a valid template, the Worker does this:
    It includes today. It reuses tasks on the right dates, moves future tasks when
    needed, sends extra tasks to trash, and creates missing tasks.
 
-Generated `Regularly` tasks are locked in Notion. The Worker can still update them
-when their template changes.
+Generated `Regularly` tasks remain unlocked in Notion, so you can edit them directly.
+The Worker may still update template-controlled fields when their template changes.
 
 ### Repeat after completion
 
