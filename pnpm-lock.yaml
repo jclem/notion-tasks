@@ -11,6 +11,9 @@ importers:
       '@effect/platform-node':
         specifier: ^4.0.0-rc.111
         version: 4.0.0-rc.113(effect@4.0.0-rc.113)(redis@6.2.1)
+      '@notionhq/client':
+        specifier: ^5.26.0
+        version: 5.26.0
       '@notionhq/workers':
         specifier: '>=0.8.0'
         version: 0.9.0(@notionhq/client@5.26.0)

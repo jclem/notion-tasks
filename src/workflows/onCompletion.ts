@@ -19,11 +19,11 @@ import {
 } from "../lib/taskTemplate.js";
 import { workflowLayer } from "../lib/workflowLayer.js";
 
-/** Records completion and materializes one after-completion recurrence. */
+/** Records completion and materializes one recurrence for done or canceled tasks. */
 export default createWorkflow({
 	name: "Complete task",
 	description:
-		"Records completion and creates the next after-completion task with template content.",
+		"Records completion for done tasks and creates the next after-completion task for done or canceled tasks.",
 	triggers: [triggers.notionPageUpdated()],
 	handler: (event, context) =>
 		Effect.runPromise(
@@ -41,10 +41,11 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 	const notion = yield* NotionEffect;
 	const config = yield* step("Read task configuration", readTaskConfig);
 	const page = yield* notion.pages.retrieve({ page_id: pageId.value });
+	const status = Option.getOrElse(statusPropertyName(page, taskProperty.status), () => "");
 	if (
 		page.parent.type !== "data_source_id" ||
 		page.parent.data_source_id !== config.tasksDataSourceId ||
-		Option.getOrElse(statusPropertyName(page, taskProperty.status), () => "") !== "Done" ||
+		(status !== "Done" && status !== "Canceled") ||
 		Option.isSome(datePropertyStart(page, taskProperty.completedAt))
 	) {
 		return;
@@ -56,12 +57,14 @@ const program = Effect.fn(function* (url: string | null, eventTimestamp: string 
 			"Determine completion time",
 			DateTime.now.pipe(Effect.map(DateTime.formatIso)),
 		));
-	yield* notion.pages.update({
-		page_id: page.id,
-		properties: {
-			[taskProperty.completedAt]: { date: { start: completedAt } },
-		},
-	});
+	if (status === "Done") {
+		yield* notion.pages.update({
+			page_id: page.id,
+			properties: {
+				[taskProperty.completedAt]: { date: { start: completedAt } },
+			},
+		});
+	}
 
 	const templateId = relationPropertyIds(page, taskProperty.template).pipe(
 		Option.flatMap((ids) => Option.fromNullishOr(ids[0])),

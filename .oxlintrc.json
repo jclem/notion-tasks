@@ -1,5 +1,6 @@
 {
 	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"ignorePatterns": ["pnpm-workspace.yaml"],
 	"plugins": ["typescript", "unicorn", "oxc"],
 	"categories": {
 		"correctness": "error"
