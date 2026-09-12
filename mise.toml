@@ -1,13 +1,14 @@
 [tools]
 node = "26.7.0"
+pnpm = "12.3.4"
 
 [tasks.bootstrap]
 description = "Install dependencies and set up the development environment"
 depends = ["bootstrap:*"]
 
 [tasks."bootstrap:install"]
-description = "Install npm dependencies"
-run = "npm install"
+description = "Install pnpm dependencies"
+run = "pnpm install"
 
 [tasks."bootstrap:pre-commit"]
 description = "Install the mise pre-commit hook"
@@ -52,7 +53,7 @@ depends = ["fix:*"]
 run = "./node_modules/.bin/oxlint ."
 
 [tasks."check:types"]
-run = "npm run check"
+run = "pnpm run check"
 
 [tasks."check:fmt"]
 run = "./node_modules/.bin/oxfmt --check ."
@@ -61,10 +62,10 @@ run = "./node_modules/.bin/oxfmt --check ."
 depends = ["check:*"]
 
 [tasks.test]
-run = "npm test"
+run = "pnpm test"
 
 [tasks.build]
-run = "npm run build"
+run = "pnpm run build"
 
 [tasks.deploy]
 run = "ntn workers deploy"
